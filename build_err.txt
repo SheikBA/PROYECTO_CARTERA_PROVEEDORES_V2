@@ -1,0 +1,89 @@
+﻿
+> proyecto-cartera-proveedores@0.0.0 build
+> vite build
+
+npm : [33mYou are 
+using Node.js 18.16.0. 
+Vite requires Node.js 
+version 20.19+ or 
+22.12+. Please upgrade 
+your Node.js 
+version.[39m
+En línea: 1 Carácter: 1
++ npm run build 2>&1 | 
+Out-File -FilePath 
+build_err.txt 
+-Encoding utf8
++ ~~~~~~~~~~~~~~~~~~
+    + CategoryInfo     
+         : NotSpecifi  
+  ed: ([33mYou are    
+ us...s version.[3    
+9m:String) [], Rem    
+oteException
+    + FullyQualifiedEr 
+   rorId : NativeComm  
+  andError
+ 
+[36mvite v7.3.1 [32mbuilding client environment for production...[36m[39m
+transforming...
+[32mÔ£ô[39m 4 modules transformed.
+[31mÔ£ù[39m Build 
+failed in 626ms
+[31merror during 
+build:
+[31m[vite:css] 
+[postcss] It looks 
+like you're trying to 
+use `tailwindcss` 
+directly as a PostCSS 
+plugin. The PostCSS 
+plugin has moved to a 
+separate package, so 
+to continue using 
+Tailwind CSS with 
+PostCSS you'll need to 
+install 
+`@tailwindcss/postcss` 
+and update your 
+PostCSS 
+configuration.[31m
+file: [36mC:/Users/eba
+eza.HOTEL_SHOPS/Desktop
+/Proyecto_Cartera_Prove
+edores/src/index.css:un
+defined:NaN[31m
+    at at (C:\Users\eba
+eza.HOTEL_SHOPS\Desktop
+\Proyecto_Cartera_Prove
+edores\node_modules\tai
+lwindcss\dist\lib.js:38
+:1643)
+    at 
+LazyResult.runOnRoot (C
+:\Users\ebaeza.HOTEL_SH
+OPS\Desktop\Proyecto_Ca
+rtera_Proveedores\node_
+modules\postcss\lib\laz
+y-result.js:361:16)
+    at 
+LazyResult.runAsync (C:
+\Users\ebaeza.HOTEL_SHO
+PS\Desktop\Proyecto_Car
+tera_Proveedores\node_m
+odules\postcss\lib\lazy
+-result.js:290:26)
+    at 
+LazyResult.async (C:\Us
+ers\ebaeza.HOTEL_SHOPS\
+Desktop\Proyecto_Carter
+a_Proveedores\node_modu
+les\postcss\lib\lazy-re
+sult.js:192:30)
+    at LazyResult.then 
+(C:\Users\ebaeza.HOTEL_
+SHOPS\Desktop\Proyecto_
+Cartera_Proveedores\nod
+e_modules\postcss\lib\l
+azy-result.js:436:17)[
+39m
