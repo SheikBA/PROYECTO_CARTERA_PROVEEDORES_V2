@@ -18,14 +18,3 @@ export const INITIAL_RAW_INVOICES = [
     { id: 'INV-004', providerName: 'Limpieza Total', amount: 3500, currency: 'MXN', dueDate: '2025-10-18', status: 'pending', group: 'G-003', bankId: 'B-001', type: 'Factura' },
     { id: 'INV-005', providerName: 'SAT', amount: 45000, currency: 'MXN', dueDate: '2025-10-30', status: 'pending', group: 'G-004', bankId: 'B-003', type: 'Impuesto' }
 ];
-
-export const AVAILABLE_INVOICES = [
-    { uuid: 'UUID-9A8B7C', providerId: 'P-006', providerName: 'Amazon Web Services', company: 'CorpCentral', amount: 45000.00, currency: 'MXN', bank: 'Banamex', account: '**** 1234' },
-    { uuid: 'UUID-1D2E3F', providerId: 'P-007', providerName: 'WeWork Espacios', company: 'CorpCentral', amount: 15000.00, currency: 'MXN', bank: 'Banorte', account: '**** 5678' },
-    { uuid: 'UUID-4G5H6I', providerId: 'P-008', providerName: 'Consultoría Legal SC', company: 'FilialNorte', amount: 22500.00, currency: 'MXN', bank: 'Scotiabank', account: '**** 3456' },
-];
-
-export const INITIAL_TRACKING_DATA = [
-    { id: 'TRK-001', date: '2025-08-15', providerName: 'Office Supplies Co.', amount: 1500.00, currency: 'MXN', status: 'Completed', pdfUrl: '/dummy.pdf' },
-    { id: 'TRK-002', date: '2025-09-01', providerName: 'TechSolutions Inc.', amount: 35000.00, currency: 'MXN', status: 'RejectedH2H', pdfUrl: null }
-];

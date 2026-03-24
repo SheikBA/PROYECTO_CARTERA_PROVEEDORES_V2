@@ -1,114 +1,77 @@
 import React, { useState } from 'react';
-import { Landmark, Globe, KeyRound, ShieldCheck } from 'lucide-react';
+import { Landmark, ArrowRight } from 'lucide-react';
 import Button from '../components/Button';
+import { APP_VERSION } from '../data/versionHistory';
 
 const Login = ({ onLogin }) => {
-    const [user, setUser] = useState('');
-    const [pass, setPass] = useState('');
     const [loading, setLoading] = useState(false);
-    const [lang, setLang] = useState('es');
+    const [username, setUsername] = useState('');
+    const [password, setPassword] = useState('');
+    const [error, setError] = useState('');
 
     const handleSubmit = (e) => {
         e.preventDefault();
+        setError('');
         setLoading(true);
+
+        // Validación de credenciales específicas
         setTimeout(() => {
-            if (user === 'Vladislav' && pass === '1234') onLogin({ name: user, role: 'Admin', lang });
-            else { alert(lang === 'es' ? "Error: Credenciales inválidas (Usa Vladislav / 1234)" : "Error: Invalid credentials"); setLoading(false); }
-        }, 1000);
+            if (username === 'Vladislav' && password === '1234') {
+                if (onLogin) {
+                    onLogin({ name: 'Vladislav', role: 'Administrador' });
+                }
+            } else {
+                setError('Usuario o contraseña incorrectos.');
+                setLoading(false);
+            }
+        }, 800);
     };
 
     return (
-        <div className="min-h-screen w-full flex bg-background">
-            {/* Left Side: Decorative Panel */}
-            <div className="hidden lg:flex w-1/2 bg-slate-900 relative overflow-hidden flex-col justify-between p-12">
-                <div className="absolute inset-0 bg-gradient-to-br from-blue-900/40 to-slate-900/80 z-10"></div>
-                
-                {/* Abstract Shapes */}
-                <div className="absolute top-0 right-0 w-[40rem] h-[40rem] bg-blue-500/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
-                <div className="absolute bottom-0 left-0 w-[30rem] h-[30rem] bg-emerald-500/10 rounded-full blur-3xl translate-y-1/2 -translate-x-1/2"></div>
-                
-                <div className="relative z-20 flex items-center gap-3 text-white">
-                    <Landmark size={32} className="text-blue-400" />
-                    <span className="text-2xl font-bold tracking-wide">HotelShops</span>
-                </div>
-                
-                <div className="relative z-20 space-y-6">
-                    <h1 className="text-4xl md:text-5xl font-bold text-white leading-tight">
-                        Sistema Inteligente de<br/>
-                        <span className="text-blue-400">Cartera de Proveedores</span>
-                    </h1>
-                    <p className="text-slate-400 text-lg max-w-md">
-                        Gestiona, autoriza y consolida propuestas de pago corporativas de manera centralizada y segura.
-                    </p>
-                    <div className="flex items-center gap-4 mt-8">
-                        <div className="flex -space-x-3">
-                            <div className="w-10 h-10 rounded-full bg-slate-800 border-2 border-slate-900 flex items-center justify-center"><ShieldCheck size={18} className="text-emerald-400"/></div>
-                            <div className="w-10 h-10 rounded-full bg-slate-800 border-2 border-slate-900 flex items-center justify-center"><KeyRound size={18} className="text-blue-400"/></div>
-                        </div>
-                        <span className="text-sm font-medium text-slate-400">Acceso cifrado de extremo a extremo</span>
+        <div className="min-h-screen bg-slate-50 flex">
+            {/* Sección Izquierda: Imagen / Branding */}
+            <div className="hidden lg:flex flex-1 bg-slate-900 relative items-center justify-center overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-br from-blue-900/40 to-slate-900/90 z-10"></div>
+                {/* Imagen de fondo decorativa */}
+                <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?q=80&w=2070&auto=format&fit=crop')] bg-cover bg-center opacity-40 mix-blend-overlay"></div>
+
+                <div className="relative z-20 text-white p-12 max-w-xl text-center">
+                    <div className="mx-auto h-24 w-24 bg-white/10 backdrop-blur-md text-white flex items-center justify-center rounded-2xl mb-8 border border-white/20 shadow-2xl">
+                        <Landmark size={48} />
                     </div>
-                </div>
-                
-                <div className="relative z-20 italic text-slate-500 text-sm">
-                    &copy; 2026 HotelShops Corp. Todos los derechos reservados.
+                    <h1 className="text-4xl font-bold mb-4 tracking-tight">Cartera de Proveedores</h1>
+                    <p className="text-lg text-slate-200/90 leading-relaxed">
+                        Sistema integral para la gestión y control de pagos.
+                    </p>
                 </div>
             </div>
 
-            {/* Right Side: Form Panel */}
-            <div className="w-full lg:w-1/2 flex items-center justify-center p-8 sm:p-12 relative animate-fade-in">
-                {/* Language Toggle */}
-                <div className="absolute top-8 right-8 flex gap-2">
-                    <button onClick={() => setLang('es')} className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${lang === 'es' ? 'bg-primary text-white shadow-md' : 'text-slate-500 hover:bg-slate-100'}`}>ES</button>
-                    <button onClick={() => setLang('en')} className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${lang === 'en' ? 'bg-primary text-white shadow-md' : 'text-slate-500 hover:bg-slate-100'}`}>EN</button>
-                </div>
-
+            {/* Sección Derecha: Formulario de Login */}
+            <div className="flex-1 flex items-center justify-center p-8 bg-white">
                 <div className="w-full max-w-md space-y-8">
-                    <div className="text-center lg:text-left">
-                        <div className="lg:hidden flex items-center justify-center gap-2 mb-6 text-primary">
-                            <Landmark size={32} />
-                            <span className="text-2xl font-bold text-slate-800">HotelShops</span>
-                        </div>
-                        <h2 className="text-3xl font-bold text-slate-800 tracking-tight">
-                            {lang === 'es' ? 'Bienvenido de nuevo' : 'Welcome back'}
-                        </h2>
-                        <p className="text-slate-500 mt-2">
-                            {lang === 'es' ? 'Ingresa tus credenciales corporativas.' : 'Enter your corporate credentials.'}
-                        </p>
+                    <div className="text-center">
+                        <h2 className="text-3xl font-bold text-slate-800">Bienvenido</h2>
+                        <p className="mt-2 text-slate-500">Ingresa tus credenciales para acceder.</p>
                     </div>
 
-                    <form onSubmit={handleSubmit} className="space-y-5">
-                        <div className="space-y-2">
-                            <label className="text-sm font-semibold text-slate-700">{lang === 'es' ? 'Usuario' : 'Username'}</label>
-                            <input 
-                                type="text" 
-                                placeholder="Ej. Vladislav" 
-                                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-slate-800"
-                                value={user} 
-                                onChange={e => setUser(e.target.value)} 
-                                required
-                            />
+                    <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
+                        <div className="space-y-4">
+                            <input type="text" placeholder="Usuario" className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-primary outline-none transition-all" value={username} onChange={(e) => setUsername(e.target.value)} />
+                            <input type="password" placeholder="Contraseña" className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-primary outline-none transition-all" value={password} onChange={(e) => setPassword(e.target.value)} />
                         </div>
-                        <div className="space-y-2">
-                            <div className="flex justify-between items-center">
-                                <label className="text-sm font-semibold text-slate-700">{lang === 'es' ? 'Contraseña' : 'Password'}</label>
-                                <a href="#" onClick={(e) => { e.preventDefault(); alert("Contacto al administrador IT."); }} className="text-sm font-medium text-primary hover:text-blue-700 transition-colors">
-                                    {lang === 'es' ? '¿Olvidaste tu contraseña?' : 'Forgot password?'}
-                                </a>
-                            </div>
-                            <input 
-                                type="password" 
-                                placeholder="••••••••" 
-                                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-slate-800"
-                                value={pass} 
-                                onChange={e => setPass(e.target.value)} 
-                                required
-                            />
-                        </div>
-                        
-                        <Button type="submit" className="w-full py-3.5 text-base mt-4" loading={loading} variant="primary">
-                            {lang === 'es' ? 'Iniciar Sesión' : 'Sign In'}
+                        {error && <p className="text-red-500 text-sm text-center font-medium">{error}</p>}
+                        <Button type="submit" variant="primary" className="w-full justify-center py-3 text-lg" disabled={loading} icon={ArrowRight}>
+                            {loading ? 'Iniciando...' : 'Iniciar Sesión'}
                         </Button>
+                        <div className="text-center pt-2">
+                            <button type="button" className="text-sm text-primary hover:text-blue-700 font-medium hover:underline transition-colors">
+                                Actualizar contraseña
+                            </button>
+                        </div>
                     </form>
+                    <div className="text-center pt-8">
+                        <span className="text-xs font-mono text-slate-300">v{APP_VERSION}</span>
+                    </div>
                 </div>
             </div>
         </div>

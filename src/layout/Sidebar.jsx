@@ -1,21 +1,20 @@
 import React from 'react';
-import { Landmark, ChevronLeft, ChevronRight, LogOut, FileText, CreditCard, Search, Database, CheckCircle, Users } from 'lucide-react';
+import { Landmark, ChevronLeft, ChevronRight, LogOut, ArrowUp, ArrowDown } from 'lucide-react';
+import { APP_VERSION } from '../data/versionHistory';
 
-const MENU_ITEMS = [
-    { id: 'templates', label: 'Config. Plantillas', icon: FileText },
-    { id: 'payments', label: 'Gestión de Pagos', icon: CreditCard },
-    { id: 'tracking', label: 'Rastreo / Comprobación', icon: Search },
-    { id: 'dataload', label: 'Cargar Fuente de Datos', icon: Database },
-    { id: 'verification', label: 'Auditoría', icon: CheckCircle },
-    { id: 'users', label: 'Usuarios y Permisos', icon: Users },
-];
-
-const Sidebar = ({ sidebarCollapsed, setSidebarCollapsed, currentModule, setCurrentModule, onLogout }) => {
+const Sidebar = ({ sidebarCollapsed, setSidebarCollapsed, currentModule, setCurrentModule, onLogout, menuItems = [], onMoveMenuItem }) => {
     return (
         <aside className={`${sidebarCollapsed ? 'w-20' : 'w-64'} bg-surface border-r border-slate-200 transition-all duration-300 flex flex-col z-20 shadow-lg relative`}>
             <div className="h-16 flex items-center justify-center border-b border-slate-100 relative shrink-0">
                 <Landmark size={28} className="text-primary" />
-                {!sidebarCollapsed && <span className="font-bold ml-2 text-textPrimary">CARTERA</span>}
+                {!sidebarCollapsed && (
+                    <span className="font-bold ml-2 text-textPrimary flex items-center gap-2">
+                        CARTERA
+                        <span className="text-[10px] bg-blue-50 text-primary px-1.5 py-0.5 rounded border border-blue-100">
+                            {APP_VERSION}
+                        </span>
+                    </span>
+                )}
 
                 {/* Fix Button Positioning: Using translating to right middle border */}
                 <button
@@ -27,16 +26,29 @@ const Sidebar = ({ sidebarCollapsed, setSidebarCollapsed, currentModule, setCurr
             </div>
 
             <nav className="flex-1 py-6 px-3 space-y-1 overflow-y-auto">
-                {MENU_ITEMS.map((item) => (
-                    <button
-                        key={item.id}
-                        onClick={() => setCurrentModule(item.id)}
-                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all ${currentModule === item.id ? 'bg-primary text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
-                        title={sidebarCollapsed ? item.label : ''}
-                    >
-                        <item.icon size={20} className={currentModule === item.id ? 'text-white' : ''} />
-                        {!sidebarCollapsed && <span className="font-medium text-sm whitespace-nowrap">{item.label}</span>}
-                    </button>
+                {menuItems.map((item, index) => (
+                    <div key={item.id} className="relative group">
+                        <button
+                            onClick={() => setCurrentModule(item.id)}
+                            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all ${currentModule === item.id ? 'bg-primary text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+                            title={sidebarCollapsed ? item.label : ''}
+                        >
+                            <item.icon size={20} className={currentModule === item.id ? 'text-white' : ''} />
+                            {!sidebarCollapsed && <span className="font-medium text-sm whitespace-nowrap">{item.label}</span>}
+                        </button>
+
+                        {/* Controles de Reordenamiento (Solo visibles en hover y si no está colapsado) */}
+                        {!sidebarCollapsed && onMoveMenuItem && (
+                            <div className="absolute right-1 top-1/2 -translate-y-1/2 flex flex-col opacity-0 group-hover:opacity-100 transition-opacity bg-white shadow-sm rounded border border-slate-100">
+                                <button onClick={(e) => { e.stopPropagation(); onMoveMenuItem(index, 'up'); }} className="p-0.5 hover:bg-slate-100 text-slate-400 hover:text-primary disabled:opacity-30" disabled={index === 0}>
+                                    <ArrowUp size={10} />
+                                </button>
+                                <button onClick={(e) => { e.stopPropagation(); onMoveMenuItem(index, 'down'); }} className="p-0.5 hover:bg-slate-100 text-slate-400 hover:text-primary disabled:opacity-30" disabled={index === menuItems.length - 1}>
+                                    <ArrowDown size={10} />
+                                </button>
+                            </div>
+                        )}
+                    </div>
                 ))}
             </nav>
 
@@ -55,4 +67,3 @@ const Sidebar = ({ sidebarCollapsed, setSidebarCollapsed, currentModule, setCurr
 };
 
 export default Sidebar;
-export { MENU_ITEMS };

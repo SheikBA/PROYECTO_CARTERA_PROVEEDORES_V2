@@ -25,11 +25,13 @@ export const parseExcelFile = (file) => {
                 const normalizedData = jsonData.map(row => {
                     const newRow = {};
                     Object.keys(row).forEach(key => {
+                        // Normalización robusta: convierte a minúsculas, espacios a guiones bajos, pero respeta guiones medios originales si es necesario o los unifica
                         const cleanKey = key.trim().toLowerCase().replace(/\s+/g, '_');
                         newRow[cleanKey] = row[key];
                     });
                     return newRow;
-                });
+                    // Filtramos filas que estén vacías (sin datos útiles)
+                }).filter(row => Object.values(row).some(val => val !== null && val !== "" && val !== undefined));
 
                 resolve(normalizedData);
             } catch (error) {
