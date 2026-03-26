@@ -5,7 +5,7 @@ const parseBoolean = (val) => {
     if (typeof val === 'boolean') return val;
     if (typeof val === 'string') {
         const v = val.trim().toUpperCase();
-        return v === 'VERDADERO' || v === 'TRUE' || v === 'SI' || v === '1';
+        return v === 'VERDADERO' || v === 'TRUE' || v === 'SI' || v === '1' || v === 'T';
     }
     return false;
 };
@@ -29,6 +29,14 @@ const parseDate = (val) => {
     return isNaN(d) ? new Date().toISOString().split('T')[0] : d.toISOString().split('T')[0];
 };
 
+// Helper para validar UUID (Formato Universal)
+const isValidUUID = (val) => {
+    if (!val || typeof val !== 'string') return false;
+    // Regex estándar para UUID (8-4-4-4-12 caracteres hex)
+    const uuidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+    return uuidRegex.test(val.trim());
+};
+
 // Esquema para validar una sola fila del Excel
 // Mapea las columnas normalizadas (snake_case) del script de Python
 export const invoiceSchema = z.object({
@@ -37,6 +45,9 @@ export const invoiceSchema = z.object({
     name: z.any().optional(),
     company: z.any().optional(),
     supplier_id: z.any().optional(),
+    // Nueva columna agregada por el usuario en el Excel para facilitar la agrupación
+    bancos: z.any().optional(),
+
     group_proveedor: z.any().optional(),
     description_grupo_proveedor: z.any().optional(),
     subgrupo_c: z.any().optional(),
@@ -95,11 +106,43 @@ export const invoiceSchema = z.object({
     const currency = data.currency_code?.trim().toUpperCase() || 'MXN';
     const rawAmount = currency === 'USD' ? data.balance_usd : data.balance_mn;
     const amount = parseAmount(rawAmount);
-    // Asignación dinámica de Banco basada en la moneda del archivo
-    const derivedBankId = currency === 'USD' ? 'B-002' : 'B-001';
 
     // Lógica robusta para encontrar el nombre del proveedor
     const rawName = data.name || data.proveedor || data.description_grupo_proveedor || "Proveedor Desconocido";
+
+    // --- VALIDACIONES DE NEGOCIO (REGLAS SOLICITADAS) ---
+
+    // 1. Nota de Crédito (Columna J - Debit Memo)
+    const isCreditMemo = parseBoolean(data.debit_memo);
+
+    // 2. Proveedor Inactivo (Columna I - Inactive)
+    const isProviderInactive = parseBoolean(data.inactive);
+
+    // 3. Prepayment (Columna K - Pre-Payment) -> Si es FALSO, NO es prepayment.
+    const isPrepayment = parseBoolean(data["pre-payment"]);
+
+    // 4. Bloqueo de Pago (Columna L - Hold Payments)
+    const isHoldPayment = parseBoolean(data.hold_payments);
+
+    // 5. Posteada (Columna P - Posted) -> Si VERDADERO, susceptible a pago.
+    const isPosted = parseBoolean(data.posted);
+
+    // 6. Validación Fiscal Compleja (Columna AF - TAR Code y Columna AE - Fiscal Folio)
+    const tarCodeVal = data.tar_code;
+    // Tarcode es 1, '1' o Verdadero
+    const isTarCode = tarCodeVal === 1 || tarCodeVal === '1' || parseBoolean(tarCodeVal);
+    const hasValidUUID = isValidUUID(data.fiscal_folio);
+
+    // ERROR FISCAL: Tiene TAR Code 1 (Dice ser No Fiscal) PERO tiene UUID válido (Es Fiscal).
+    const hasFiscalError = isTarCode && hasValidUUID;
+
+    // 7. Bloqueo de Factura pero desbloqueable (Columna AC - HoldInvoice)
+    const isHoldInvoice = parseBoolean(data.holdinvoice);
+
+    // DETERMINACIÓN: ¿Es susceptible a pago?
+    // Reglas: Debe estar posteada, NO tener hold payment, y NO tener error fiscal.
+    // (Nota: Inactive Provider usualmente bloquea, pero la regla explicita fue sobre la columna L y AF)
+    const isPayable = isPosted && !isHoldPayment && !hasFiscalError;
 
     return {
         // Estructura plana requerida por Payments.jsx
@@ -108,23 +151,31 @@ export const invoiceSchema = z.object({
         providerName: String(rawName).trim(),
         amount: amount,
         currency: currency,
-        dueDate: parseDate(data.due_date),
+        dueDate: parseDate(data.due_date), // Columna Q
         status: 'pending',
 
         // Mapeo inteligente de Grupos (Si viene vacío, asignar default)
         // Usamos el ID del grupo si existe, si no 'G-001'
         group: data.group_proveedor || 'Sin Grupo',
 
-        // Asignamos el banco derivado de la moneda
-        bankId: derivedBankId,
+        // Priorizamos la columna explicita 'BANCOS' del Excel si existe,
+        // si no, usamos la lógica por defecto de la moneda.
+        bankId: data.bancos || (currency === 'USD' ? 'PENDIENTE-USD' : 'PENDIENTE-MXN'),
 
         // Guardamos TODA la data original en 'meta' por si se necesita ver detalle
+        // Agregamos las banderas calculadas para usarlas fácilmente en el frontend (iconos, alertas, filtros)
         meta: {
             ...data,
-            // Normalizamos banderas booleanas para uso fácil en UI
-            isInactive: parseBoolean(data.inactive),
-            isPosted: parseBoolean(data.posted),
-            isHold: parseBoolean(data.hold_payments)
+            company: data.company, // Columna A
+            tranDocType: data.tran_doc_type_id, // Columna G
+            isCreditMemo,
+            isProviderInactive,
+            isPrepayment,
+            isHoldPayment,
+            isPosted,
+            isHoldInvoice,
+            hasFiscalError, // IMPORTANTE: Mostrar alerta si esto es true
+            isPayable
         }
     };
 });

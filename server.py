@@ -9,8 +9,9 @@ app = Flask(__name__)
 CORS(app)
 
 # --- CONFIGURACIÓN DE LA RUTA ACTUALIZADA ---
-BASE_DIR = r"C:\Users\ebaeza.HOTEL_SHOPS\Documents\MODELO_DATOS_CARTERA_PROVEEDORES"
-FILE_NAME = "FUENTE_DATOS..xlsx"
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(
+    __file__), "..", "MODELO_DATOS_CARTERA_PROVEEDORES"))
+FILE_NAME = "FUENTE_DATOS.xlsx"
 EXCEL_PATH = os.path.join(BASE_DIR, FILE_NAME)
 # ------------------------------------------
 
@@ -55,6 +56,46 @@ def get_invoices():
     except Exception as e:
         print(f"Error crítico leyendo el archivo: {str(e)}")
         return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/catalogs', methods=['GET'])
+def get_catalogs():
+    # Estructura vacía por defecto
+    catalogs = {
+        "banks": [],
+        "companies": [],
+        "groups": []
+    }
+
+    # Mapa de claves vs nombres de archivo esperados en disco
+    files_map = {
+        "companies": "empresas_epicor.json",
+        "groups": "grupo_proveedores.json",
+        "banks": "cuentas_pagadoras_empresa.json"
+    }
+
+    print("Cargando catálogos JSON...")
+    for key, filename in files_map.items():
+        path = os.path.join(BASE_DIR, filename)
+        if os.path.exists(path):
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    # Lógica para extraer los datos correctos de cada tipo de catálogo
+                    if key == 'banks' and isinstance(data, dict) and 'catalogo_cuentas_pagadoras' in data:
+                        catalogs[key] = data['catalogo_cuentas_pagadoras'].get(
+                            'cuentas', [])
+                    elif isinstance(data, dict) and 'registros' in data:
+                        catalogs[key] = data['registros']
+                    else:
+                        catalogs[key] = data
+                print(f" -> {filename}: OK ({len(catalogs[key])} registros)")
+            except Exception as e:
+                print(f" -> Error leyendo {filename}: {e}")
+        else:
+            print(f" -> Advertencia: No se encontró {filename}")
+
+    return jsonify(catalogs)
 
 
 if __name__ == '__main__':

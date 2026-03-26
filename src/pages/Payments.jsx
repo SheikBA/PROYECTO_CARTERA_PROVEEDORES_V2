@@ -6,9 +6,13 @@ import Badge from '../components/Badge';
 import Modal from '../components/Modal';
 
 // Metadata helpers for the UI that would normally come from the DB as well.
-import { MOCK_BANKS_META, MOCK_GROUPS_META, INITIAL_RAW_INVOICES } from '../data/mockData';
+import { INITIAL_RAW_INVOICES } from '../data/mockData.js';
+// Ya no importamos CATALOG_... fijos, los recibiremos por props
 
-const Payments = ({ rawInvoices, setRawInvoices, availableInvoices, setAvailableInvoices, trackingData, setTrackingData }) => {
+const Payments = ({ rawInvoices, setRawInvoices, availableInvoices, setAvailableInvoices, trackingData, setTrackingData, catalogs }) => {
+    // Desempaquetamos los catálogos dinámicos (con valores por defecto por seguridad)
+    const { banks: CATALOG_BANCOS = [], companies: CATALOG_COMPANIAS = [], groups: CATALOG_GRUPOS = [] } = catalogs || {};
+
     const [searchTerm, setSearchTerm] = useState('');
     const [expandedBanks, setExpandedBanks] = useState([]);
 
@@ -48,19 +52,78 @@ const Payments = ({ rawInvoices, setRawInvoices, availableInvoices, setAvailable
 
     // 1. Calculate general KPIs
     const kpis = useMemo(() => {
-        let total = 0;
-        rawInvoices.forEach(inv => {
-            total += inv.amount; // Notes of credit are already negative in mockData
-        });
+        const totalToPay = rawInvoices.reduce((sum, inv) => sum + inv.amount, 0);
+        const totalPaid = trackingData.reduce((sum, item) => sum + item.amount, 0);
+        const providers = new Set(rawInvoices.map(inv => inv.providerName));
+        const groups = new Set(rawInvoices.map(inv => inv.group));
+        const fiscalErrors = rawInvoices.filter(inv => inv.meta?.hasFiscalError).length;
+
         return {
-            totalToPay: total,
+            totalToPay,
+            totalPaid,
+            providersCount: providers.size,
+            groupsCount: groups.size,
+            fiscalErrors,
             pending: rawInvoices.length,
-            processed: trackingData.length // Paid already
+            processed: trackingData.length
         };
     }, [rawInvoices, trackingData]);
 
     // 2. Group Invoices by Bank -> Company -> Group -> Provider -> Invoices
     const bankTree = useMemo(() => {
+        const treeMap = new Map();
+
+        // 1. Inicializar el árbol con TODAS las cuentas del catálogo para que se vean las 44 tarjetas
+        // Y pre-popular la estructura de Compañías dentro de cada Banco
+        CATALOG_BANCOS.forEach(b => {
+            // Usamos el ID de la cuenta del catálogo como clave única
+            const key = b.id;
+
+            // Buscamos datos de la compañía asociada a esta cuenta bancaria
+            const companyMeta = CATALOG_COMPANIAS.find(c => c.company === b.company);
+            const companyName = companyMeta ? companyMeta.company_name : b.company;
+            const companyCountry = companyMeta ? companyMeta.country : '';
+
+            // Extracción robusta del nombre del Banco
+            const fullDescription = b.bank || b.description || 'Banco Desconocido';
+            const KNOWN_BANKS = ['BANAMEX', 'BANORTE', 'SANTANDER', 'SCOTIABANK', 'BBVA', 'HSBC', 'INBURSA', 'BAJIO', 'AFIRME'];
+            const upperDesc = fullDescription.toUpperCase();
+            const detectedBankName = KNOWN_BANKS.find(k => upperDesc.includes(k)) || fullDescription.split(' ')[1] || 'OTRO';
+
+            treeMap.set(key, {
+                id: key,
+                name: detectedBankName,
+                account: b.bank_account || 'S/N', // El número de cuenta
+                currency: b.currency_code,
+                description: fullDescription,
+                company: b.company,
+                amount: 0,
+                // Pre-cargamos la compañía propietaria de la cuenta como un "item" hijo
+                items: [{
+                    id: b.company,
+                    name: companyName,
+                    country: companyCountry, // Info extra para mostrar
+                    amount: 0,
+                    // Pre-populamos con el catálogo de grupos por defecto (Global)
+                    items: CATALOG_GRUPOS.map(g => ({
+                        id: `${g.group}|${g.description}`, // ID compuesto para evitar colisiones
+                        name: g.description,
+                        groupCode: g.group,
+                        amount: 0,
+                        items: [],
+                        invoices: [],
+                        meta: g
+                    })),
+                    meta: companyMeta
+                }],
+                invoices: []
+            });
+        });
+
+        // Buckets para lo no asignado (solo aparecerán si tienen facturas huerfanas)
+        const unassignedMXN = { id: 'Unassigned-MXN', name: 'NO ASIGNADO', account: 'Generico', currency: 'MXN', description: 'Facturas sin cuenta asignada', amount: 0, items: [], invoices: [] };
+        const unassignedUSD = { id: 'Unassigned-USD', name: 'NO ASIGNADO', account: 'Generico', currency: 'USD', description: 'Facturas sin cuenta asignada', amount: 0, items: [], invoices: [] };
+
         // Helper para buscar o crear nodo
         const findOrCreate = (array, id, name, extra = {}) => {
             let node = array.find(item => item.id === id);
@@ -71,49 +134,96 @@ const Payments = ({ rawInvoices, setRawInvoices, availableInvoices, setAvailable
             return node;
         };
 
-        const tree = [];
-
         rawInvoices.forEach(inv => {
             // Nivel 1: Banco
-            // Intentamos buscar en Mock, si no, generamos nombre basado en el ID derivado (Moneda)
-            let bankName = 'Banco Desconocido';
-            let bankAccount = '---';
+            // Lógica Maestra: Determinar Cuenta Pagadora cruzando Compañía y Moneda con el Catálogo
+            // Usamos el 'bankId' que viene del Excel (columna 'BANCOS') para encontrar el 'id' en el catálogo
+            const match = CATALOG_BANCOS.find(b => b.id === inv.bankId);
 
-            const bankMeta = MOCK_BANKS_META.find(b => b.id === inv.bankId);
-            if (bankMeta) {
-                bankName = bankMeta.name;
-                bankAccount = bankMeta.account;
+            let bankNode;
+            if (match) {
+                bankNode = treeMap.get(match.id);
             } else {
-                // Fallback inteligente si no está en el Mock
-                if (inv.bankId === 'B-001') { bankName = 'Cuenta Operativa MXN'; bankAccount = '**MXN'; }
-                if (inv.bankId === 'B-002') { bankName = 'Cuenta Dólares USD'; bankAccount = '**USD'; }
+                // Fallback a los nodos genéricos
+                bankNode = inv.currency === 'USD' ? unassignedUSD : unassignedMXN;
             }
 
-            const bankNode = findOrCreate(tree, inv.bankId, bankName, { account: bankAccount });
-            bankNode.amount += inv.amount;
+            if (bankNode) {
+                bankNode.amount += inv.amount;
 
-            // Nivel 2: Compañía (Usamos inv.company o un default)
-            const companyName = inv.company || 'Sin Compañía Asignada';
-            // Usamos el nombre como ID simple para agrupación visual
-            const compNode = findOrCreate(bankNode.items, companyName, companyName);
-            compNode.amount += inv.amount;
+                // Nivel 2: Compañía
+                const companyName = inv.company || 'Sin Compañía Asignada';
 
-            // Nivel 3: Grupo
-            // Prioridad: Descripción del Excel > Nombre Mock > ID Grupo
-            const groupName = inv.meta?.description_grupo_proveedor || MOCK_GROUPS_META[inv.group]?.name || inv.group || 'Grupo General';
-            const groupNode = findOrCreate(compNode.items, inv.group, groupName);
-            groupNode.amount += inv.amount;
+                // Buscamos el nodo de compañía (que ya debería existir por la inicialización si vino del catálogo)
+                let compNode = bankNode.items.find(c => c.id === companyName);
 
-            // Nivel 4: Proveedor
-            const provNode = findOrCreate(groupNode.items, inv.providerName, inv.providerName);
-            provNode.amount += inv.amount;
+                if (!compNode) {
+                    // Si la factura trae una compañía que NO estaba ligada a la cuenta en el catálogo (caso raro o "Sin Asignar")
+                    const companyMeta = CATALOG_COMPANIAS.find(c => c.company === inv.company);
+                    const displayCompanyName = companyMeta ? companyMeta.company_name : companyName;
+                    compNode = findOrCreate(bankNode.items, companyName, displayCompanyName, { meta: companyMeta });
+                }
 
-            // Nivel 5: Facturas (Guardadas en el proveedor)
-            provNode.invoices.push(inv);
+                if (compNode) {
+                    compNode.amount += inv.amount;
+
+                    if (!compNode.items || compNode.items.length === 0) {
+                        compNode.items = CATALOG_GRUPOS.map(g => ({
+                            id: `${g.group}|${g.description}`,
+                            name: g.description,
+                            groupCode: g.group,
+                            amount: 0,
+                            items: [],
+                            invoices: [],
+                            meta: g
+                        }));
+                    }
+
+                    const invDesc = inv.meta?.description_grupo_proveedor;
+
+                    // Intentamos encontrar el nodo pre-populado que coincida con código y descripción
+                    let groupNode = compNode.items.find(g =>
+                        g.groupCode === inv.group && (!invDesc || g.name === invDesc)
+                    );
+
+                    if (!groupNode) {
+                        // Si no está en el catálogo, lo creamos dinámicamente
+                        const groupName = invDesc || inv.group || 'Grupo General';
+                        groupNode = findOrCreate(compNode.items, inv.group, groupName);
+                        groupNode.groupCode = inv.group;
+                    }
+
+                    groupNode.amount += inv.amount;
+
+                    // Nivel 4: Proveedor
+                    const provNode = findOrCreate(groupNode.items, inv.providerName, inv.providerName);
+                    provNode.amount += inv.amount;
+
+                    // Nivel 5: Facturas (Guardadas en el proveedor)
+                    provNode.invoices.push(inv);
+                }
+            }
         });
 
-        return tree;
-    }, [rawInvoices]);
+        // Agregar los nodos de no asignados si tienen monto > 0
+        const result = Array.from(treeMap.values());
+        if (unassignedMXN.amount > 0) result.unshift(unassignedMXN);
+        if (unassignedUSD.amount > 0) result.unshift(unassignedUSD);
+
+        return result;
+    }, [rawInvoices, CATALOG_BANCOS, CATALOG_COMPANIAS, CATALOG_GRUPOS]);
+
+    // Paginación de Bancos (Lógica faltante que causaba el error)
+    const filteredBanks = useMemo(() => {
+        const list = (bankTree || []).filter(b =>
+            b.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            (b.account && b.account.includes(searchTerm)) ||
+            (b.description && b.description.toLowerCase().includes(searchTerm.toLowerCase()))
+        );
+
+        // Ordenamos por nombre de banco para agrupar visualmente "por banco"
+        return list.sort((a, b) => a.name.localeCompare(b.name));
+    }, [bankTree, searchTerm]);
 
     // Reset pagination when provider changes
     useEffect(() => {
@@ -121,7 +231,85 @@ const Payments = ({ rawInvoices, setRawInvoices, availableInvoices, setAvailable
         setInvoiceSearch('');
     }, [selectedProvider]);
 
-    // Helper para separar facturas Fiscales vs No Fiscales (TAR Code)
+    useEffect(() => {
+        // Este hook está vacío a propósito, solo para registrar cambios en el término de búsqueda si fuera necesario en el futuro.
+    }, [searchTerm]);
+
+    // Reassign Bank Handler
+    const openReassignModal = (bank) => {
+        setReassignSourceBank(bank);
+        setReassignTargetBank('');
+        setIsReassignModalOpen(true);
+    };
+
+    const handleConfirmReassign = () => {
+        if (!reassignTargetBank) return alert("Selecciona un banco destino.");
+
+        const targetBank = CATALOG_BANCOS.find(b => b.id === reassignTargetBank);
+        if (!targetBank) {
+            return alert("Error: No se encontró el banco destino en el catálogo.");
+        }
+
+        if (targetBank.id === reassignSourceBank.id) {
+            return alert("El banco destino debe ser diferente.");
+        }
+
+        setRawInvoices(prev => prev.map(inv => {
+            if (inv.bankId === reassignSourceBank.id) {
+                return { ...inv, bankId: targetBank.id };
+            }
+            return inv;
+        }));
+
+        setIsReassignModalOpen(false);
+        alert(`Se han movido todos los pagos de ${reassignSourceBank.name} al nuevo banco.`);
+    };
+
+    // Modal Search handler
+    const handleSearchInvoice = () => {
+        const found = (availableInvoices || []).find(inv => inv.uuid === searchUuid);
+        setSearchResult(found || null);
+        if (!found) alert("No se encontró ninguna factura con ese UUID en el ERP.");
+    };
+
+    const handleAddFoundInvoice = () => {
+        if (!searchResult) return;
+
+        // Transforma el resultado de la búsqueda al formato interno de `rawInvoices`
+        const newRawInvoice = {
+            id: searchResult.uuid,
+            uuid: searchResult.uuid,
+            providerName: searchResult.providerName,
+            amount: searchResult.amount,
+            currency: searchResult.currency,
+            dueDate: new Date().toISOString().split('T')[0], // Default due date
+            status: 'pending',
+            group: 'Sin Grupo', // Default group
+            bankId: 'Unassigned-MXN', // Default to unassigned
+            company: searchResult.company,
+            meta: { ...searchResult }
+        };
+
+        // Validar si la factura ya existe en la propuesta
+        if (rawInvoices.some(inv => inv.id === newRawInvoice.id)) {
+            alert("Esta factura ya se encuentra en la propuesta de pago.");
+            return;
+        }
+
+        setRawInvoices(prev => [...prev, newRawInvoice]);
+
+        // Opcional: remover de la lista de "disponibles" para no agregarla dos veces
+        setAvailableInvoices(prev => (prev || []).filter(inv => inv.uuid !== searchResult.uuid));
+
+        // Resetear el modal
+        setSearchResult(null);
+        setSearchUuid('');
+        setIsAddModalOpen(false);
+
+        alert("Factura agregada a la propuesta exitosamente.");
+    };
+
+
     const getSegmentedInvoices = (provider) => {
         if (!provider) return { fiscal: [], nonFiscal: [] };
 
@@ -220,71 +408,6 @@ const Payments = ({ rawInvoices, setRawInvoices, availableInvoices, setAvailable
         }
     };
 
-    // Reassign Bank Handler
-    const openReassignModal = (bank) => {
-        setReassignSourceBank(bank);
-        setReassignTargetBank('');
-        setIsReassignModalOpen(true);
-    };
-
-    const handleConfirmReassign = () => {
-        if (!reassignTargetBank) return alert("Selecciona un banco destino.");
-        if (reassignTargetBank === reassignSourceBank.id) return alert("El banco destino debe ser diferente.");
-
-        setRawInvoices(prev => prev.map(inv => {
-            if (inv.bankId === reassignSourceBank.id) {
-                return { ...inv, bankId: reassignTargetBank };
-            }
-            return inv;
-        }));
-
-        setIsReassignModalOpen(false);
-        alert(`Se han movido todos los pagos de ${reassignSourceBank.name} al nuevo banco.`);
-    };
-
-    // Modal Search handler
-    const handleSearchInvoice = () => {
-        const found = (availableInvoices || []).find(inv => inv.uuid === searchUuid);
-        setSearchResult(found || null);
-        if (!found) alert("No se encontró ninguna factura con ese UUID en el ERP.");
-    };
-
-    const handleAddFoundInvoice = () => {
-        if (!searchResult) return;
-
-        // Push it matching the rawInvoice structure
-        const newRawInvoice = {
-            id: `PAY-NEW-${Math.floor(Math.random() * 1000)}`,
-            providerId: searchResult.providerId,
-            providerName: searchResult.providerName,
-            group: 'G-001', // Defaulting to first group for mock simplicity
-            type: 'Ingreso',
-            amount: searchResult.amount,
-            currency: searchResult.currency,
-            dueDate: new Date().toISOString().split('T')[0],
-            status: 'pending',
-            bankId: 'B-001', // Defaulting for mock
-            accountId: 'CTA-001'
-        };
-
-        setRawInvoices(prev => [...prev, newRawInvoice]);
-
-        // Remove from available (if applicable)
-        setAvailableInvoices(prev => (prev || []).filter(inv => inv.uuid !== searchResult.uuid));
-
-        // Reset modal
-        setSearchResult(null);
-        setSearchUuid('');
-        setIsAddModalOpen(false);
-
-        alert("Factura agregada a la propuesta exitosamente.");
-    };
-
-
-    // --------------------------------------------------------------------------------
-    // RENDER UI
-    // --------------------------------------------------------------------------------
-
     return (
         <div className="p-6 h-full flex flex-col space-y-6 animate-fade-in-up">
 
@@ -299,6 +422,16 @@ const Payments = ({ rawInvoices, setRawInvoices, availableInvoices, setAvailable
                     <Button variant="dark" icon={Plus} onClick={() => setIsAddModalOpen(true)}>Añadir Factura</Button>
                 </div>
             </div>
+
+            {/* Alerta Crítica de Errores Fiscales (JSON #6) */}
+            {kpis.fiscalErrors > 0 && (
+                <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded-r-xl flex items-center justify-between animate-pulse">
+                    <div className="flex items-center gap-3">
+                        <ShieldAlert className="text-red-600" size={24} />
+                        <p className="text-sm text-red-800 font-medium">Se han detectado <b>{kpis.fiscalErrors}</b> facturas con inconsistencias fiscales (TAR Code vs UUID). Por favor, revíselas antes de procesar el pago.</p>
+                    </div>
+                </div>
+            )}
 
             {/* Global Proposal Inputs (JSON #11-13) */}
             <Card className="bg-slate-50 border-slate-200">
@@ -417,57 +550,71 @@ const Payments = ({ rawInvoices, setRawInvoices, availableInvoices, setAvailable
                 <div className="overflow-y-auto flex-1 bg-slate-50/50 p-4">
                     {drillLevel === 0 && (
                         // NIVEL 0: BANCOS (CUENTAS PAGADORAS)
-                        <div className="space-y-4 max-w-5xl mx-auto pb-4">
+                        <div className="max-w-7xl mx-auto pb-4">
                             <h2 className="text-lg font-bold text-slate-800 pb-2 border-b border-slate-200/50">Lista cuentas pagadoras</h2>
                             {(bankTree || []).length === 0 ? (
                                 <div className="p-12 text-center text-slate-500">
                                     <CheckCircle2 size={48} className="mx-auto mb-4 opacity-50" />
-                                    <p className="text-lg font-medium">No hay facturas en la propuesta actual.</p>
-                                    <p className="text-sm mt-2">Usa "Regenerar" o "Añadir Factura" para cargar data.</p>
+                                    <p className="text-lg font-medium">No hay catálogos cargados.</p>
+                                    <p className="text-sm mt-2">Ve a "Carga de Datos" y presiona "Cargar Catálogos".</p>
                                 </div>
                             ) : null}
 
-                            {(bankTree || []).filter(b => b.name.toLowerCase().includes(searchTerm.toLowerCase())).map((bank) => {
-                                return (
-                                    <div key={bank.id} className="bg-white border border-slate-200 rounded-xl shadow-sm hover:shadow-md transition-all overflow-hidden cursor-pointer group"
-                                        onClick={() => { setSelectedBank(bank); setDrillLevel(1); }}
-                                    >
-
-                                        <div className="p-5 flex items-center justify-between">
-                                            <div className="flex items-center gap-4">
-                                                <div className={`p-3 rounded-xl bg-blue-600 text-white shadow-blue-200 shadow-lg`}>
-                                                    <Building2 size={22} />
-                                                </div>
-                                                <div>
-                                                    <h3 className="font-bold text-slate-800 text-lg flex items-center gap-3">
-                                                        {bank.name} <span className="text-xs px-2 py-0.5 bg-slate-100 rounded text-slate-500 border border-slate-200">Cuenta: {bank.account}</span>
-                                                    </h3>
-                                                    <p className="text-sm text-slate-500 mt-1 flex items-center gap-1">
-                                                        <Briefcase size={14} /> Contiene {(bank.items || []).length} Compañías
-                                                    </p>
-                                                </div>
-                                            </div>
-                                            <div className="flex items-center gap-6">
-                                                <div className="text-right">
-                                                    <p className="text-xs text-slate-500 mb-0.5">Suma Acumulada del Banco</p>
-                                                    <p className="font-bold text-slate-800 text-xl">{formatCurrency(bank.amount)}</p>
-                                                </div>
-                                                {/* Acciones de Banco: Reasignar y Editar */}
-                                                <div className="flex items-center gap-2">
-                                                    <button
-                                                        className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                                                        title="Reasignar Saldo"
-                                                        onClick={(e) => { e.stopPropagation(); openReassignModal(bank); }}
-                                                    >
-                                                        <ArrowRightLeft size={18} />
-                                                    </button>
-                                                </div>
-                                                <ChevronRight size={20} className="text-slate-300 group-hover:text-primary transition-colors" />
-                                            </div>
+                            <div className="space-y-6 mt-4">
+                                {Object.entries(
+                                    filteredBanks.reduce((acc, bank) => {
+                                        const key = bank.name || 'Desconocido';
+                                        if (!acc[key]) acc[key] = [];
+                                        acc[key].push(bank);
+                                        return acc;
+                                    }, {})
+                                ).map(([bankName, accounts]) => (
+                                    <div key={bankName}>
+                                        <h3 className="font-bold text-slate-700 text-sm uppercase tracking-wider mb-2 flex items-center gap-2">
+                                            <Building2 size={16} className="text-slate-400" /> {bankName}
+                                        </h3>
+                                        <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                                            <table className="w-full text-sm text-left">
+                                                <thead className="bg-slate-50/80">
+                                                    <tr className="text-xs text-slate-500 font-semibold">
+                                                        <th className="p-3 w-1/4">Banco</th>
+                                                        <th className="p-3 w-1/4">Cuenta</th>
+                                                        <th className="p-3">ID Cuenta</th>
+                                                        <th className="p-3">Moneda</th>
+                                                        <th className="p-3 text-right">Saldo Propuesta</th>
+                                                        <th className="p-3 text-center">Acciones</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-slate-100">
+                                                    {accounts.map(account => (
+                                                        <tr key={account.id} className="hover:bg-blue-50/50 cursor-pointer" onClick={() => { setSelectedBank(account); setDrillLevel(1); }}>
+                                                            <td className="p-3 font-medium text-slate-800">{account.name}</td>
+                                                            <td className="p-3 font-mono text-slate-600">{account.account}</td>
+                                                            <td className="p-3 font-mono text-xs text-slate-500">{account.id}</td>
+                                                            <td className="p-3">
+                                                                <Badge status={account.currency === 'USD' ? 'success' : 'info'}>{account.currency}</Badge>
+                                                            </td>
+                                                            <td className={`p-3 text-right font-bold ${account.amount > 0 ? 'text-slate-800' : 'text-slate-400'}`}>
+                                                                {formatCurrency(account.amount)}
+                                                            </td>
+                                                            <td className="p-3 text-center">
+                                                                <button
+                                                                    className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                                                                    title="Reasignar Saldo"
+                                                                    onClick={(e) => { e.stopPropagation(); openReassignModal(account); }}
+                                                                    disabled={account.amount <= 0}
+                                                                >
+                                                                    <ArrowRightLeft size={16} />
+                                                                </button>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
                                         </div>
                                     </div>
-                                );
-                            })}
+                                ))}
+                            </div>
                         </div>
                     )}
 
@@ -515,8 +662,11 @@ const Payments = ({ rawInvoices, setRawInvoices, availableInvoices, setAvailable
                                                     {icon}
                                                 </div>
                                                 <div>
-                                                    <h4 className="font-bold text-slate-800">{item.name}</h4>
-                                                    <p className="text-xs text-slate-500">{(item.items || []).length} {drillLevel === 3 ? 'Facturas' : 'Elementos'} contenidos</p>
+                                                    <h4 className="font-bold text-slate-800">
+                                                        {item.name}
+                                                    </h4>
+                                                    {drillLevel === 2 && <p className="text-[10px] font-mono text-slate-400 uppercase">Código: {item.groupCode || item.id}</p>}
+                                                    <p className="text-xs text-slate-500">{(item.items || []).length} {drillLevel === 3 ? 'Facturas' : (drillLevel === 2 ? 'Proveedores' : 'Grupos')} activos</p>
                                                 </div>
                                             </div>
                                             <div className="text-right flex items-center gap-4">
@@ -596,7 +746,10 @@ const Payments = ({ rawInvoices, setRawInvoices, availableInvoices, setAvailable
                                                         {paginatedFiscal.map(inv => (
                                                             <tr key={inv.id} className="hover:bg-slate-50">
                                                                 <td className="p-4">
-                                                                    <div className="font-mono text-xs text-slate-500">{inv.uuid}</div>
+                                                                    <div className="flex items-center gap-2">
+                                                                        <div className="font-mono text-xs text-slate-500">{inv.uuid}</div>
+                                                                        {inv.meta?.hasFiscalError && <Badge status="danger">Error Fiscal</Badge>}
+                                                                    </div>
                                                                     <div className="text-xs text-slate-400">ID: {inv.id}</div>
                                                                 </td>
                                                                 <td className="p-4 text-slate-600">{formatDate(inv.dueDate)}</td>
@@ -745,29 +898,7 @@ const Payments = ({ rawInvoices, setRawInvoices, availableInvoices, setAvailable
                             onChange={(e) => setReassignTargetBank(e.target.value)}
                         >
                             <option value="">-- Seleccionar --</option>
-                            {(MOCK_BANKS_META || []).filter(b => b.id !== reassignSourceBank?.id).map(b => <option key={b.id} value={b.id}>{b.name} - {b.account}</option>)}
-                        </select>
-                    </div>
-                    <div className="flex justify-end pt-2"><Button variant="primary" icon={ArrowRightLeft} onClick={handleConfirmReassign}>Confirmar Reasignación</Button></div>
-                </div>
-            </Modal>
-
-            {/* Modal Reasignar Cuenta (JSON #20) */}
-            <Modal isOpen={isReassignModalOpen} onClose={() => setIsReassignModalOpen(false)} title="Reasignar Saldo de Banco" size="sm">
-                <div className="space-y-4">
-                    <div className="bg-amber-50 text-amber-800 p-4 rounded-lg flex gap-3 text-sm">
-                        <AlertTriangle size={20} className="shrink-0" />
-                        <p>Estás a punto de mover todas las facturas de <b>{reassignSourceBank?.name}</b> a otra cuenta. Esta acción actualizará los saldos globales.</p>
-                    </div>
-                    <div>
-                        <label className="block text-sm font-bold text-slate-700 mb-2">Seleccionar Banco Destino</label>
-                        <select
-                            className="w-full p-3 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-primary"
-                            value={reassignTargetBank}
-                            onChange={(e) => setReassignTargetBank(e.target.value)}
-                        >
-                            <option value="">-- Seleccionar --</option>
-                            {(MOCK_BANKS_META || []).filter(b => b.id !== reassignSourceBank?.id).map(b => <option key={b.id} value={b.id}>{b.name} - {b.account}</option>)}
+                            {(CATALOG_BANCOS || []).filter(b => b.id !== reassignSourceBank?.id).map(b => <option key={b.id} value={b.id}>{b.bank} ({b.currency_code})</option>)}
                         </select>
                     </div>
                     <div className="flex justify-end pt-2"><Button variant="primary" icon={ArrowRightLeft} onClick={handleConfirmReassign}>Confirmar Reasignación</Button></div>
