@@ -1,18 +1,22 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Search, Filter, Download, DollarSign, Clock, CheckCircle2, ChevronRight, ChevronLeft, ArrowLeft, RefreshCw, Building2, Layers, Users, X, Plus, Edit2, ArrowRightLeft, AlertTriangle, Briefcase, FileText, ShieldAlert, ArrowUpDown, ChevronUp, ChevronDown } from 'lucide-react';
+import { Search, Filter, Download, DollarSign, Clock, CheckCircle2, ChevronRight, ChevronLeft, ArrowLeft, RefreshCw, Building2, Layers, Users, X, Plus, Edit2, ArrowRightLeft, AlertTriangle, Briefcase, FileText, ShieldAlert, ArrowUpDown, ChevronUp, ChevronDown, Lock } from 'lucide-react';
 import Button from '../components/Button';
 import Card from '../components/Card';
 import Badge from '../components/Badge';
 import Modal from '../components/Modal';
 // Ya no importamos CATALOG_... fijos, los recibiremos por props
 
-const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorizedInvoices, setAuthorizedInvoices, setRejectedInvoices, availableInvoices, setAvailableInvoices, trackingData, setTrackingData, catalogs, mode = 'proposal' }) => {
+const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorizedInvoices, setAuthorizedInvoices, setRejectedInvoices, availableInvoices, setAvailableInvoices, trackingData, setTrackingData, catalogs, activeBatch, setActiveBatch, mode = 'proposal' }) => {
     const isProposal = mode === 'proposal';
     const isAuthorized = mode === 'authorized';
     const isRejected = mode === 'rejected';
+    // El sistema se bloquea en Gestión si hay un Batch ya finalizado
+    const isLocked = isProposal && activeBatch?.status === 'finalized';
 
-    // Desempaquetamos los catálogos dinámicos (con valores por defecto por seguridad)
-    const { banks: CATALOG_BANCOS = [], companies: CATALOG_COMPANIAS = [], groups: CATALOG_GRUPOS = [] } = catalogs || {};
+    // Desempaquetamos los catálogos con máxima seguridad para evitar errores de tipo
+    const CATALOG_BANCOS = Array.isArray(catalogs?.banks) ? catalogs.banks : [];
+    const CATALOG_COMPANIAS = Array.isArray(catalogs?.companies) ? catalogs.companies : [];
+    const CATALOG_GRUPOS = Array.isArray(catalogs?.groups) ? catalogs.groups : [];
 
     const [searchTerm, setSearchTerm] = useState('');
     // Inicializamos con todos los bancos expandidos para que sea intuitivo al inicio
@@ -56,13 +60,32 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
     // CORE LOGIC: Derived State from rawInvoices
     // --------------------------------------------------------------------------------
 
+    // Combinamos facturas para la visualización en modo propuesta para que no desaparezcan al autorizar
+    const displayInvoices = useMemo(() => {
+        const invoicesArray = Array.isArray(rawInvoices) ? rawInvoices : [];
+        const authorizedArray = Array.isArray(authorizedInvoices) ? authorizedInvoices : [];
+
+        if (isProposal) {
+            // Para refinar la propuesta, necesitamos ver tanto lo pendiente como lo autorizado.
+            const pending = invoicesArray.map(inv => ({ ...inv, _status: 'pending' }));
+            const authorized = authorizedArray.map(inv => ({ ...inv, _status: 'authorized' }));
+            return [...pending, ...authorized];
+        }
+        return invoicesArray;
+    }, [rawInvoices, authorizedInvoices, isProposal]);
+
     // 1. Calculate general KPIs
     const kpis = useMemo(() => {
-        const totalToPay = rawInvoices.reduce((sum, inv) => sum + inv.amount, 0);
+        // En gestión, el universo total es lo pendiente + lo autorizado
+        const baseInvoices = isProposal
+            ? [...(Array.isArray(rawInvoices) ? rawInvoices : []), ...(Array.isArray(authorizedInvoices) ? authorizedInvoices : [])]
+            : (Array.isArray(rawInvoices) ? rawInvoices : []);
+
+        const totalToPay = baseInvoices.reduce((sum, inv) => sum + inv.amount, 0);
         const totalPaid = trackingData.reduce((sum, item) => sum + item.amount, 0);
-        const providers = new Set(rawInvoices.map(inv => inv.providerName));
-        const groups = new Set(rawInvoices.map(inv => inv.group));
-        const fiscalErrors = rawInvoices.filter(inv => inv.meta?.hasFiscalError).length;
+        const providers = new Set(baseInvoices.map(inv => inv.providerName));
+        const groups = new Set(baseInvoices.map(inv => inv.group));
+        const fiscalErrors = baseInvoices.filter(inv => inv.meta?.hasFiscalError).length;
 
         return {
             totalToPay,
@@ -70,10 +93,10 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
             providersCount: providers.size,
             groupsCount: groups.size,
             fiscalErrors,
-            pending: rawInvoices.length,
+            pending: isProposal ? rawInvoices.length : baseInvoices.length,
             processed: trackingData.length
         };
-    }, [rawInvoices, trackingData]);
+    }, [rawInvoices, authorizedInvoices, trackingData, isProposal]);
 
     // 2. Group Invoices by Bank -> Company -> Group -> Provider -> Invoices
     const bankTree = useMemo(() => {
@@ -130,12 +153,13 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
             return node;
         };
 
-        rawInvoices.forEach(inv => {
+        const invoicesToProcess = displayInvoices;
+
+        invoicesToProcess.forEach(inv => {
             // Nivel 1: Banco
-            // Lógica Maestra: Determinar Cuenta Pagadora cruzando Compañía y Moneda con el Catálogo
-            // Usamos el 'bankId' que viene del Excel (columna 'BANCOS') para encontrar el 'id' en el catálogo
-            // Normalizamos ambos IDs a String para asegurar el match
-            const bankMatch = CATALOG_BANCOS.find(b => String(b.id).trim() === String(inv.bankId).trim());
+            const bankMatch = CATALOG_BANCOS.find(b =>
+                b && inv && String(b.id).trim() === String(inv.bankId).trim()
+            );
 
             let bankNode;
             if (bankMatch) {
@@ -147,6 +171,8 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
 
             if (bankNode && Array.isArray(bankNode.items)) {
                 bankNode.amount += inv.amount;
+                // Aseguramos que el banco tenga la factura para acciones de nivel 0
+                bankNode.invoices.push(inv);
 
                 // Nivel 2: Compañía
                 const companyName = inv.company || bankNode.company || 'Sin Compañía';
@@ -161,10 +187,14 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
                     compNode = findOrCreate(bankNode.items, companyName, displayCompanyName, { meta: companyMeta });
                 }
 
+                // Inicializar arreglo de facturas en compañía si no existe
+                if (!compNode.invoices) compNode.invoices = [];
+
                 // Ajuste de Jerarquía: Saltamos nivel visual de Compañía si es necesario para ir directo a Grupo
                 // Pero mantenemos la estructura interna.
                 if (compNode) {
                     compNode.amount += inv.amount;
+                    compNode.invoices.push(inv); // Aseguramos facturas en nivel compañía
 
                     const groupCode = inv.group;
                     const invDesc = inv.meta?.description_grupo_proveedor;
@@ -211,7 +241,7 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
         if (unassignedUSD.amount > 0) result.unshift(unassignedUSD);
 
         return result;
-    }, [rawInvoices, CATALOG_BANCOS, CATALOG_COMPANIAS, CATALOG_GRUPOS]);
+    }, [displayInvoices, CATALOG_BANCOS, CATALOG_COMPANIAS, CATALOG_GRUPOS]);
 
     // Paginación de Bancos (Lógica faltante que causaba el error)
     const filteredBanks = useMemo(() => {
@@ -265,6 +295,46 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
         alert(`Se han movido todos los pagos de ${reassignSourceBank.name} al nuevo banco.`);
     };
 
+    // --- LOGICA DE BATCH (FINALIZAR PROCESO) ---
+    const handleFinalizeBatch = () => {
+        if (authorizedInvoices.length === 0) {
+            alert("No hay facturas autorizadas para finalizar la propuesta.");
+            return;
+        }
+
+        const confirmFinalize = window.confirm("¿Está seguro de finalizar esta propuesta de pago? Una vez finalizada, se generará un lote para el módulo de Pagos Autorizados.");
+
+        if (confirmFinalize) {
+            const batchId = `BCH-${new Date().getFullYear()}${(new Date().getMonth() + 1).toString().padStart(2, '0')}-${Math.floor(1000 + Math.random() * 9000)}`;
+            setActiveBatch({
+                id: batchId,
+                status: 'finalized',
+                createdAt: new Date().toISOString()
+            });
+            alert(`Propuesta finalizada con éxito. ID de Lote: ${batchId}`);
+        }
+    };
+
+    const handleEditBatch = () => {
+        setActiveBatch(prev => ({ ...prev, status: 'editing' }));
+    };
+
+    const handleDeleteBatch = () => {
+        const confirmDelete = window.confirm("¡ADVERTENCIA! Si elimina el Batch, todas las facturas autorizadas se liberarán y volverán al panel de Gestión. ¿Desea continuar?");
+
+        if (confirmDelete) {
+            // Liberar facturas: Mover de authorizedInvoices a rawInvoices
+            if (setProposalInvoices) {
+                setProposalInvoices(prev => [...prev, ...authorizedInvoices]);
+            }
+            if (setAuthorizedInvoices) {
+                setAuthorizedInvoices([]);
+            }
+            setActiveBatch(null);
+            alert("Batch eliminado. Las facturas han sido liberadas.");
+        }
+    };
+
     // --- LÓGICA DE MOVIMIENTO ENTRE ESTADOS ---
     const handleAuthorize = (invoicesToMove) => {
         if (!invoicesToMove || invoicesToMove.length === 0) return;
@@ -285,21 +355,31 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
     const handleReject = (invoicesToMove) => {
         if (!invoicesToMove || invoicesToMove.length === 0) return;
         const ids = invoicesToMove.map(inv => inv.id);
-        setRawInvoices(prev => prev.filter(inv => !ids.includes(inv.id)));
+
+        // Limpiar de ambas listas posibles en Gestión
+        setRawInvoices(prev => (prev || []).filter(inv => !ids.includes(inv.id)));
+        if (setAuthorizedInvoices) {
+            setAuthorizedInvoices(prev => (prev || []).filter(inv => !ids.includes(inv.id)));
+        }
+
         if (setRejectedInvoices) {
             setRejectedInvoices(prev => [...prev, ...invoicesToMove]);
         }
-        alert(`Se han rechazado ${invoicesToMove.length} facturas.`);
     };
 
     const handleRevoke = (invoicesToMove) => {
         if (!invoicesToMove || invoicesToMove.length === 0) return;
         const ids = invoicesToMove.map(inv => inv.id);
-        setRawInvoices(prev => prev.filter(inv => !ids.includes(inv.id)));
+
+        // 1. Quitar de la lista de Autorizados
+        if (setAuthorizedInvoices) {
+            setAuthorizedInvoices(prev => (prev || []).filter(inv => !ids.includes(inv.id)));
+        }
+
+        // 2. Devolver a pendientes (rawInvoices)
         if (setProposalInvoices) {
             setProposalInvoices(prev => [...prev, ...invoicesToMove]);
         }
-        alert(`Se ha quitado la autorización de ${invoicesToMove.length} facturas.`);
     };
 
     // Modal Search handler
@@ -448,22 +528,65 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
                     <h1 className="text-2xl font-bold tracking-tight text-slate-800">
                         {isProposal ? 'Gestión de Pagos' : 'Pagos Autorizados'}
                     </h1>
-                    <p className="text-slate-500 mt-1">
-                        {isProposal ? 'Etapa 1: Refinamiento y autorización de propuesta.' : 'Etapa 2: Control de pagos autorizados para dispersión.'}
-                    </p>
+                    <div className="flex flex-wrap items-center gap-3 mt-1">
+                        <p className="text-slate-500">
+                            {isProposal ? 'Etapa 1: Refinamiento y autorización.' : 'Etapa 2: Control de dispersión.'}
+                        </p>
+                        {isLocked && (
+                            <Badge status="info" className="animate-pulse">
+                                <Lock size={12} className="mr-1" /> PROPUESTA BLOQUEADA (BATCH ACTIVO)
+                            </Badge>
+                        )}
+                        {activeBatch && (
+                            <div className="flex items-center gap-2 bg-slate-100 border border-slate-200 px-2 py-1 rounded-md">
+                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">Batch Activo:</span>
+                                <span className="text-xs font-mono font-bold text-primary">{activeBatch.id}</span>
+                                {isProposal && (
+                                    <div className="flex gap-1 ml-2 border-l pl-2 border-slate-300">
+                                        {activeBatch.status === 'finalized' ? (
+                                            <button onClick={handleEditBatch} className="text-blue-600 hover:text-blue-800 text-[10px] font-bold underline">EDITAR</button>
+                                        ) : (
+                                            <span className="text-emerald-600 text-[10px] font-bold uppercase animate-pulse">Editando...</span>
+                                        )}
+                                        <button onClick={handleDeleteBatch} className="text-red-600 hover:text-red-800 text-[10px] font-bold underline">ELIMINAR</button>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
                 </div>
                 <div className="flex flex-wrap gap-2 w-full xl:w-auto">
-                    {isProposal && (
+                    {isProposal && !isLocked && (
                         <Button
                             variant="primary"
                             className="bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 shadow-lg shadow-blue-200 animate-pulse border-none text-white"
-                            onClick={() => alert("Proceso de refinamiento finalizado. Los pagos autorizados están listos para revisión en el siguiente módulo.")}
+                            onClick={handleFinalizeBatch}
                         >
                             FINALIZAR PROCESO
                         </Button>
                     )}
-                    <Button variant="secondary" icon={Download}>Exportar</Button>
-                    {isProposal && <Button variant="dark" icon={Plus} onClick={() => setIsAddModalOpen(true)}>Añadir Factura</Button>}
+                    {isProposal && !isLocked && (
+                        <>
+                            <Button
+                                variant="success"
+                                className="bg-emerald-600 hover:bg-emerald-700 text-white shadow-md"
+                                icon={CheckCircle2}
+                                onClick={() => handleAuthorize(rawInvoices)}
+                                disabled={rawInvoices.length === 0}
+                            >
+                                Autorizar Propuesta Completa
+                            </Button>
+                            <Button
+                                variant="danger"
+                                className="bg-red-600 hover:bg-red-700 text-white shadow-md"
+                                icon={X}
+                                onClick={() => handleReject(rawInvoices)}
+                                disabled={rawInvoices.length === 0}
+                            >
+                                Rechazar Propuesta Completa
+                            </Button>
+                        </>
+                    )}
                 </div>
             </div>
 
@@ -588,17 +711,37 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
                             </div>
                         </div>
                     ) : (
-                        <div className="relative w-full sm:w-80">
-                            <Search size={18} className="absolute left-3 top-2.5 text-slate-400" />
-                            <input
-                                type="text"
-                                placeholder="Buscar banco o cuenta..."
-                                className="block w-full pl-10 pr-3 py-2 border border-slate-200 rounded-lg bg-slate-50 focus:bg-white text-sm"
-                                value={searchTerm}
-                                onChange={(e) => setSearchTerm(e.target.value)}
-                            />
+                        <div className="flex items-center justify-start gap-6 w-full px-2">
+                            {/* Botones Añadir y Exportar reubicados */}
+                            <div className="flex items-center gap-2">
+                                <Button
+                                    variant="secondary"
+                                    icon={Download}
+                                    size="sm"
+                                    disabled={isProposal && isLocked}
+                                >
+                                    Exportar
+                                </Button>
+                                {isProposal && !isLocked && (
+                                    <Button variant="dark" icon={Plus} size="sm" onClick={() => setIsAddModalOpen(true)}>Añadir Factura</Button>
+                                )}
+                            </div>
+
+                            <div className="h-8 w-px bg-slate-200"></div>
+
+                            <div className="relative w-full sm:w-80">
+                                <Search size={18} className="absolute left-3 top-2.5 text-slate-400" />
+                                <input
+                                    type="text"
+                                    placeholder="Buscar banco o cuenta..."
+                                    className="block w-full pl-10 pr-3 py-2 border border-slate-200 rounded-lg bg-slate-50 focus:bg-white text-sm"
+                                    value={searchTerm}
+                                    onChange={(e) => setSearchTerm(e.target.value)}
+                                />
+                            </div>
                         </div>
-                    )}
+                    )
+                    }
                 </div>
 
                 <div className="overflow-y-auto flex-1 bg-slate-50/50 p-4">
@@ -661,21 +804,21 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
                                                                 </td>
                                                                 <td className="p-3 text-center min-w-[200px]">
                                                                     <div className="flex flex-wrap items-center justify-center gap-1">
-                                                                        {isProposal && account.amount > 0 && (
-                                                                            <div className="flex items-center gap-1">
+                                                                        {isProposal && account.invoices?.length > 0 && !isLocked && (
+                                                                            <div className="flex items-center gap-2">
                                                                                 <button
-                                                                                    className="p-2 text-emerald-500 hover:bg-emerald-50 rounded-lg transition-colors"
+                                                                                    className="p-2 bg-emerald-50 text-emerald-600 hover:bg-emerald-600 hover:text-white rounded-lg transition-all shadow-sm border border-emerald-100"
                                                                                     title="Autorizar Banco"
                                                                                     onClick={(e) => { e.stopPropagation(); handleAuthorize(account.invoices); }}
                                                                                 >
-                                                                                    <CheckCircle2 size={16} />
+                                                                                    <CheckCircle2 size={18} />
                                                                                 </button>
                                                                                 <button
-                                                                                    className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                                                                                    className="p-2 bg-red-50 text-red-600 hover:bg-red-600 hover:text-white rounded-lg transition-all shadow-sm border border-red-100"
                                                                                     title="No autorizar Banco"
                                                                                     onClick={(e) => { e.stopPropagation(); handleReject(account.invoices); }}
                                                                                 >
-                                                                                    <X size={16} />
+                                                                                    <X size={18} />
                                                                                 </button>
                                                                             </div>
                                                                         )}
@@ -778,22 +921,22 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
                                                                 'Ver Facturas'}
                                                     </span>
                                                 </div>
-                                                <div className="flex flex-col items-end gap-1">
-                                                    {isProposal && item.amount > 0 && (
-                                                        <div className="flex items-center gap-1">
+                                                <div className="flex flex-col items-end gap-2">
+                                                    {isProposal && item.invoices?.length > 0 && !isLocked && (
+                                                        <div className="flex items-center gap-2">
                                                             <button
-                                                                className="p-2 bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-600 hover:text-white transition-all shadow-sm group/btn"
+                                                                className="flex items-center gap-2 px-3 py-2 bg-emerald-50 text-emerald-700 rounded-lg hover:bg-emerald-600 hover:text-white transition-all shadow-sm border border-emerald-200 font-bold text-xs"
                                                                 title="Autorizar este nivel"
                                                                 onClick={(e) => { e.stopPropagation(); handleAuthorize(item.invoices || []); }}
                                                             >
-                                                                <CheckCircle2 size={18} />
+                                                                <CheckCircle2 size={16} /> AUTORIZAR
                                                             </button>
                                                             <button
-                                                                className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-600 hover:text-white transition-all shadow-sm group/btn flex items-center justify-center"
+                                                                className="flex items-center gap-2 px-3 py-2 bg-red-50 text-red-700 rounded-lg hover:bg-red-600 hover:text-white transition-all shadow-sm border border-red-200 font-bold text-xs"
                                                                 title="No autorizar este nivel"
                                                                 onClick={(e) => { e.stopPropagation(); handleReject(item.invoices || []); }}
                                                             >
-                                                                <X size={18} />
+                                                                <X size={16} /> RECHAZAR
                                                             </button>
                                                         </div>
                                                     )}
@@ -957,10 +1100,34 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
                                                                     </td>
                                                                     <td className="p-4 text-center sticky right-0 bg-white group-hover:bg-slate-50 min-w-[180px]">
                                                                         {isProposal ? (
-                                                                            <div className="flex items-center justify-center gap-1">
-                                                                                <button onClick={() => handleAuthorize([inv])} className="text-emerald-500 hover:bg-emerald-50 p-1.5 rounded" title="Autorizar Factura"><CheckCircle2 size={16} /></button>
-                                                                                <button onClick={() => handleExclude(inv.id)} className="text-slate-400 hover:text-red-500 p-1.5 rounded hover:bg-red-50" title="Excluir"><X size={16} /></button>
-                                                                            </div>
+                                                                            inv._status === 'authorized' ? (
+                                                                                <div className="flex flex-col items-center gap-1">
+                                                                                    <Badge status="success">AUTORIZADO</Badge>
+                                                                                    {!isLocked && (
+                                                                                        <div className="flex gap-1">
+                                                                                            <button onClick={() => handleRevoke([inv])} className="text-blue-500 hover:bg-blue-50 p-1 rounded text-[10px] font-bold" title="Editar / Volver a Pendiente">EDITAR</button>
+                                                                                            <button onClick={() => handleReject([inv])} className="text-red-500 hover:bg-red-50 p-1 rounded" title="Rechazar"><X size={14} /></button>
+                                                                                        </div>
+                                                                                    )}
+                                                                                </div>
+                                                                            ) : (
+                                                                                <div className="flex items-center justify-center gap-2">
+                                                                                    {!isLocked ? (
+                                                                                        <>
+                                                                                            <button onClick={() => handleAuthorize([inv])} className="text-emerald-500 hover:bg-emerald-50 p-1.5 rounded" title="Autorizar Factura"><CheckCircle2 size={16} /></button>
+                                                                                            <button
+                                                                                                onClick={() => handleReject([inv])}
+                                                                                                className="text-slate-400 hover:text-red-500 p-1.5 rounded hover:bg-red-50"
+                                                                                                title="No autorizar"
+                                                                                            >
+                                                                                                <X size={16} />
+                                                                                            </button>
+                                                                                        </>
+                                                                                    ) : (
+                                                                                        <span className="text-[10px] text-slate-400 italic">Pendiente</span>
+                                                                                    )}
+                                                                                </div>
+                                                                            )
                                                                         ) : (
                                                                             <div className="flex items-center justify-center">
                                                                                 <Badge status="success">AUTORIZADO</Badge>

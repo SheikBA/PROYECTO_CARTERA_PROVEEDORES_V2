@@ -37,6 +37,7 @@ const App = () => {
   const [rejectedInvoices, setRejectedInvoices] = useState([]);
   const [availableInvoices, setAvailableInvoices] = useState([]);
   const [trackingData, setTrackingData] = useState([]);
+  const [activeBatch, setActiveBatch] = useState(null);
 
   // Estado para catálogos dinámicos (Bancos, Empresas, Grupos)
   const [catalogs, setCatalogs] = useState({
@@ -122,12 +123,13 @@ const App = () => {
     const savedData = localStorage.getItem('cartera_app_cache');
     if (savedData) {
       try {
-        const { invoices, authorized, rejected, tracking, cats } = JSON.parse(savedData);
+        const { invoices, authorized, rejected, tracking, cats, batch } = JSON.parse(savedData);
         if (invoices) setRawInvoices(invoices);
         if (authorized) setAuthorizedInvoices(authorized);
         if (rejected) setRejectedInvoices(rejected);
         if (tracking) setTrackingData(tracking);
         if (cats) setCatalogs(cats);
+        if (batch) setActiveBatch(batch);
       } catch (e) {
         console.error("Error cargando caché local", e);
       }
@@ -136,13 +138,20 @@ const App = () => {
 
   // --- PERSISTENCIA: Guardar cambios automáticamente ---
   useEffect(() => {
-    const dataToSave = { invoices: rawInvoices, authorized: authorizedInvoices, rejected: rejectedInvoices, tracking: trackingData, cats: catalogs };
+    const dataToSave = {
+      invoices: rawInvoices,
+      authorized: authorizedInvoices,
+      rejected: rejectedInvoices,
+      tracking: trackingData,
+      cats: catalogs,
+      batch: activeBatch
+    };
     try {
       localStorage.setItem('cartera_app_cache', JSON.stringify(dataToSave));
     } catch (e) {
       console.warn("El volumen de datos es demasiado grande para el caché local. Los cambios no se persistirán al refrescar.");
     }
-  }, [rawInvoices, trackingData, catalogs]);
+  }, [rawInvoices, authorizedInvoices, rejectedInvoices, trackingData, catalogs, activeBatch]);
 
   const handleLogin = (user) => {
     setCurrentUser(user);
@@ -181,6 +190,8 @@ const App = () => {
             trackingData={trackingData}
             setTrackingData={setTrackingData}
             catalogs={catalogs}
+            activeBatch={activeBatch}
+            setActiveBatch={setActiveBatch}
             mode="proposal"
           />
         );
@@ -194,6 +205,8 @@ const App = () => {
             trackingData={trackingData}
             setTrackingData={setTrackingData}
             catalogs={catalogs}
+            activeBatch={activeBatch}
+            setActiveBatch={setActiveBatch}
             mode="authorized"
           />
         );

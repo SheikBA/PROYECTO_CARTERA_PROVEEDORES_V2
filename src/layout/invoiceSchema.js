@@ -1,41 +1,5 @@
 import { z } from 'zod';
-
-// Helper para convertir textos booleanos de Excel (Verdadero/Falso)
-const parseBoolean = (val) => {
-    if (typeof val === 'boolean') return val;
-    if (typeof val === 'string') {
-        const v = val.trim().toUpperCase();
-        return v === 'VERDADERO' || v === 'TRUE' || v === 'SI' || v === '1' || v === 'T';
-    }
-    return false;
-};
-
-// Helper para limpiar montos que vengan como texto "$ 1,200.00"
-const parseAmount = (val) => {
-    if (typeof val === 'number') return val;
-    if (typeof val === 'string') {
-        // Eliminar todo lo que no sea número, punto o signo negativo
-        const clean = val.replace(/[^0-9.-]+/g, '');
-        return parseFloat(clean) || 0;
-    }
-    return 0;
-};
-
-// Helper para fechas
-const parseDate = (val) => {
-    if (!val) return new Date().toISOString().split('T')[0];
-    // Si viene de Excel numérico o string
-    const d = new Date(val);
-    return isNaN(d) ? new Date().toISOString().split('T')[0] : d.toISOString().split('T')[0];
-};
-
-// Helper para validar UUID (Formato Universal)
-const isValidUUID = (val) => {
-    if (!val || typeof val !== 'string') return false;
-    // Regex estándar para UUID (8-4-4-4-12 caracteres hex)
-    const uuidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
-    return uuidRegex.test(val.trim());
-};
+import { sp_process_invoice_data } from '../logic/Reglas_Negocio.js'; // Asegúrate de que la ruta sea correcta
 
 // Esquema para validar una sola fila del Excel
 // Mapea las columnas normalizadas (snake_case) del script de Python
@@ -104,91 +68,8 @@ export const invoiceSchema = z.object({
     transac_num_c: z.any().optional(),
 
 }).transform((data) => {
-    // Lógica para determinar el monto real según la moneda
-    const currency = data.currency_code?.trim().toUpperCase() || 'MXN';
-    const rawAmount = currency === 'USD' ? data.balance_usd : data.balance_mn;
-    const amount = parseAmount(rawAmount);
-
-    // Lógica robusta para encontrar el nombre del proveedor
-    const rawName = data.name || data.proveedor || data.description_grupo_proveedor || "Proveedor Desconocido";
-
-    // --- VALIDACIONES DE NEGOCIO (REGLAS SOLICITADAS) ---
-
-    // 1. Nota de Crédito (Columna J - Debit Memo)
-    const isCreditMemo = parseBoolean(data.debit_memo);
-
-    // 2. Proveedor Inactivo (Columna I - Inactive)
-    const isProviderInactive = parseBoolean(data.inactive);
-
-    // 3. Prepayment (Columna K - Pre-Payment) -> Si es FALSO, NO es prepayment.
-    const isPrepayment = parseBoolean(data["pre-payment"]);
-
-    // 4. Bloqueo de Pago (Columna L - Hold Payments)
-    const isHoldPayment = parseBoolean(data.hold_payments);
-
-    // 5. Posteada (Columna P - Posted) -> Si VERDADERO, susceptible a pago.
-    const isPosted = parseBoolean(data.posted);
-
-    // 6. Validación Fiscal Compleja (Columna AF - TAR Code y Columna AE - Fiscal Folio)
-    const tarCodeVal = data.tar_code;
-    // Tarcode es 1, '1' o Verdadero
-    const isTarCode = tarCodeVal === 1 || tarCodeVal === '1' || parseBoolean(tarCodeVal);
-
-    // Priorizamos mxfiscalfolio (Columna AR del Excel según tu indicación)
-    const uuidSource = data.mxfiscalfolio || data.fiscal_folio;
-    const hasValidUUID = isValidUUID(uuidSource);
-
-    // REGLA: Es fiscal solo si tiene UUID y el TarCode NO es 1.
-    const isFiscal = hasValidUUID && !isTarCode;
-
-    // ERROR FISCAL: Si tiene UUID pero marcaron TarCode 1 (Inconsistencia de registro).
-    const hasFiscalError = isTarCode && hasValidUUID;
-
-    // 7. Bloqueo de Factura pero desbloqueable (Columna AC - HoldInvoice)
-    const isHoldInvoice = parseBoolean(data.holdinvoice);
-
-    // DETERMINACIÓN: ¿Es susceptible a pago?
-    // Reglas: Debe estar posteada, NO tener hold payment, y NO tener error fiscal.
-    // (Nota: Inactive Provider usualmente bloquea, pero la regla explicita fue sobre la columna L y AF)
-    const isPayable = isPosted && !isHoldPayment && !hasFiscalError;
-
-    return {
-        // Estructura plana requerida por Payments.jsx
-        id: uuidSource || `INV-${data.invoice || Math.random().toString(36).substr(2, 9)}`,
-        uuid: uuidSource,
-        providerName: String(rawName).trim(),
-        amount: amount,
-        currency: currency,
-        dueDate: parseDate(data.due_date), // Columna Q
-        status: 'pending',
-
-        // Mapeo inteligente de Grupos (Si viene vacío, asignar default)
-        // Usamos el ID del grupo si existe, si no 'G-001'
-        group: data.group_proveedor || 'Sin Grupo',
-
-        // Prioridad: Columna 'BANCO' > 'BANCOS' > Lógica por moneda (Fallback)
-        // Normalizamos el ID quitando decimales de Excel
-        bankId: (data.banco || data.bancos)
-            ? String(data.banco || data.bancos).split('.')[0].trim()
-            : (currency === 'USD' ? 'PENDIENTE-USD' : 'PENDIENTE-MXN'),
-
-        // Guardamos TODA la data original en 'meta' por si se necesita ver detalle
-        // Agregamos las banderas calculadas para usarlas fácilmente en el frontend (iconos, alertas, filtros)
-        meta: {
-            ...data,
-            company: data.company, // Columna A
-            tranDocType: data.tran_doc_type_id, // Columna G
-            isCreditMemo,
-            isProviderInactive,
-            isPrepayment,
-            isHoldPayment,
-            isPosted,
-            isHoldInvoice,
-            isFiscal,
-            hasFiscalError, // IMPORTANTE: Mostrar alerta si esto es true
-            isPayable
-        }
-    };
+    // Invocamos el SP de negocio para procesar los datos
+    return sp_process_invoice_data(data);
 });
 
 export const invoicesArraySchema = z.array(invoiceSchema);
