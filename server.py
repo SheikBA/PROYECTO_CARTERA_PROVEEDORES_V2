@@ -10,8 +10,8 @@ CORS(app)
 
 # --- CONFIGURACIÓN DE LA RUTA ACTUALIZADA ---
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(
-    __file__), "..", "MODELO_DATOS_CARTERA_PROVEEDORES"))
-FILE_NAME = "FUENTE_DATOS.xlsx"
+    __file__), "..", "..", "MODELO_DATOS_CARTERA_PROVEEDORES"))
+FILE_NAME = "FUENTE_DATOS..xlsx"
 EXCEL_PATH = os.path.join(BASE_DIR, FILE_NAME)
 # ------------------------------------------
 
@@ -21,6 +21,12 @@ def get_invoices():
     # Verificamos si el archivo existe antes de intentar leerlo
     if not os.path.exists(EXCEL_PATH):
         print(f"ERROR: Archivo no encontrado en: {EXCEL_PATH}")
+        # Diagnóstico de ayuda: listar archivos en la carpeta
+        if os.path.exists(BASE_DIR):
+            print(
+                f"Archivos encontrados en la carpeta: {os.listdir(BASE_DIR)}")
+        else:
+            print(f"La carpeta base no existe: {BASE_DIR}")
         return jsonify({"error": f"El archivo no existe en la ruta: {EXCEL_PATH}"}), 404
 
     try:
@@ -39,7 +45,7 @@ def get_invoices():
                 f"ADVERTENCIA: La hoja '{target_sheet}' no se encontró. Se leerá la primera hoja: '{sheet_names[0]}'.")
             target_sheet = sheet_names[0]
 
-        df = pd.read_excel(xls, sheet_name=target_sheet)
+        df = pd.read_excel(xls, sheet_name=target_sheet, engine='openpyxl')
 
         # Limpieza de datos (Nulos a None, columnas a minúsculas/guiones bajos)
         df = df.where(pd.notnull(df), None)
@@ -56,46 +62,6 @@ def get_invoices():
     except Exception as e:
         print(f"Error crítico leyendo el archivo: {str(e)}")
         return jsonify({"error": str(e)}), 500
-
-
-@app.route('/api/catalogs', methods=['GET'])
-def get_catalogs():
-    # Estructura vacía por defecto
-    catalogs = {
-        "banks": [],
-        "companies": [],
-        "groups": []
-    }
-
-    # Mapa de claves vs nombres de archivo esperados en disco
-    files_map = {
-        "companies": "empresas_epicor.json",
-        "groups": "grupo_proveedores.json",
-        "banks": "cuentas_pagadoras_empresa.json"
-    }
-
-    print("Cargando catálogos JSON...")
-    for key, filename in files_map.items():
-        path = os.path.join(BASE_DIR, filename)
-        if os.path.exists(path):
-            try:
-                with open(path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    # Lógica para extraer los datos correctos de cada tipo de catálogo
-                    if key == 'banks' and isinstance(data, dict) and 'catalogo_cuentas_pagadoras' in data:
-                        catalogs[key] = data['catalogo_cuentas_pagadoras'].get(
-                            'cuentas', [])
-                    elif isinstance(data, dict) and 'registros' in data:
-                        catalogs[key] = data['registros']
-                    else:
-                        catalogs[key] = data
-                print(f" -> {filename}: OK ({len(catalogs[key])} registros)")
-            except Exception as e:
-                print(f" -> Error leyendo {filename}: {e}")
-        else:
-            print(f" -> Advertencia: No se encontró {filename}")
-
-    return jsonify(catalogs)
 
 
 if __name__ == '__main__':

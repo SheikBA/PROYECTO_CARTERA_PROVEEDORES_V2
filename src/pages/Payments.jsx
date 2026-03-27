@@ -1,20 +1,22 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Search, Filter, Download, DollarSign, Clock, CheckCircle2, ChevronRight, ChevronLeft, ArrowLeft, RefreshCw, Building2, Layers, Users, X, Plus, Edit2, ArrowRightLeft, AlertTriangle, Briefcase, FileText, ShieldAlert } from 'lucide-react';
+import { Search, Filter, Download, DollarSign, Clock, CheckCircle2, ChevronRight, ChevronLeft, ArrowLeft, RefreshCw, Building2, Layers, Users, X, Plus, Edit2, ArrowRightLeft, AlertTriangle, Briefcase, FileText, ShieldAlert, ArrowUpDown, ChevronUp, ChevronDown } from 'lucide-react';
 import Button from '../components/Button';
 import Card from '../components/Card';
 import Badge from '../components/Badge';
 import Modal from '../components/Modal';
-
-// Metadata helpers for the UI that would normally come from the DB as well.
-import { INITIAL_RAW_INVOICES } from '../data/mockData.js';
 // Ya no importamos CATALOG_... fijos, los recibiremos por props
 
-const Payments = ({ rawInvoices, setRawInvoices, availableInvoices, setAvailableInvoices, trackingData, setTrackingData, catalogs }) => {
+const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorizedInvoices, setAuthorizedInvoices, setRejectedInvoices, availableInvoices, setAvailableInvoices, trackingData, setTrackingData, catalogs, mode = 'proposal' }) => {
+    const isProposal = mode === 'proposal';
+    const isAuthorized = mode === 'authorized';
+    const isRejected = mode === 'rejected';
+
     // Desempaquetamos los catálogos dinámicos (con valores por defecto por seguridad)
     const { banks: CATALOG_BANCOS = [], companies: CATALOG_COMPANIAS = [], groups: CATALOG_GRUPOS = [] } = catalogs || {};
 
     const [searchTerm, setSearchTerm] = useState('');
-    const [expandedBanks, setExpandedBanks] = useState([]);
+    // Inicializamos con todos los bancos expandidos para que sea intuitivo al inicio
+    const [collapsedBanks, setCollapsedBanks] = useState([]);
 
     // Navigation State:
     // 0: Bancos -> 1: Compañías -> 2: Grupos -> 3: Proveedores -> 4: Facturas (Fiscal/NoFiscal)
@@ -26,7 +28,6 @@ const Payments = ({ rawInvoices, setRawInvoices, availableInvoices, setAvailable
 
     // Inputs Globales State
     const [globalAmountInput, setGlobalAmountInput] = useState('');
-    const [globalAdjustmentInput, setGlobalAdjustmentInput] = useState('');
 
     // Modals state
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -36,6 +37,11 @@ const Payments = ({ rawInvoices, setRawInvoices, availableInvoices, setAvailable
 
     const [searchUuid, setSearchUuid] = useState('');
     const [searchResult, setSearchResult] = useState(null);
+
+    // Estados para Ordenamiento y Secciones Colapsables
+    const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
+    const [isFiscalExpanded, setIsFiscalExpanded] = useState(true);
+    const [isNonFiscalExpanded, setIsNonFiscalExpanded] = useState(true);
 
     // Pagination & Local Search State (Level 4)
     const [invoicePage, setInvoicePage] = useState(1);
@@ -88,7 +94,7 @@ const Payments = ({ rawInvoices, setRawInvoices, availableInvoices, setAvailable
             const fullDescription = b.bank || b.description || 'Banco Desconocido';
             const KNOWN_BANKS = ['BANAMEX', 'BANORTE', 'SANTANDER', 'SCOTIABANK', 'BBVA', 'HSBC', 'INBURSA', 'BAJIO', 'AFIRME'];
             const upperDesc = fullDescription.toUpperCase();
-            const detectedBankName = KNOWN_BANKS.find(k => upperDesc.includes(k)) || fullDescription.split(' ')[1] || 'OTRO';
+            const detectedBankName = KNOWN_BANKS.find(k => upperDesc.includes(k)) || (fullDescription && fullDescription.split(' ')[1]) || fullDescription || 'OTRO';
 
             treeMap.set(key, {
                 id: key,
@@ -98,22 +104,12 @@ const Payments = ({ rawInvoices, setRawInvoices, availableInvoices, setAvailable
                 description: fullDescription,
                 company: b.company,
                 amount: 0,
-                // Pre-cargamos la compañía propietaria de la cuenta como un "item" hijo
                 items: [{
                     id: b.company,
                     name: companyName,
                     country: companyCountry, // Info extra para mostrar
                     amount: 0,
-                    // Pre-populamos con el catálogo de grupos por defecto (Global)
-                    items: CATALOG_GRUPOS.map(g => ({
-                        id: `${g.group}|${g.description}`, // ID compuesto para evitar colisiones
-                        name: g.description,
-                        groupCode: g.group,
-                        amount: 0,
-                        items: [],
-                        invoices: [],
-                        meta: g
-                    })),
+                    items: [], // Ahora es dinámico: se llena según la fuente de datos
                     meta: companyMeta
                 }],
                 invoices: []
@@ -138,24 +134,25 @@ const Payments = ({ rawInvoices, setRawInvoices, availableInvoices, setAvailable
             // Nivel 1: Banco
             // Lógica Maestra: Determinar Cuenta Pagadora cruzando Compañía y Moneda con el Catálogo
             // Usamos el 'bankId' que viene del Excel (columna 'BANCOS') para encontrar el 'id' en el catálogo
-            const match = CATALOG_BANCOS.find(b => b.id === inv.bankId);
+            // Normalizamos ambos IDs a String para asegurar el match
+            const bankMatch = CATALOG_BANCOS.find(b => String(b.id).trim() === String(inv.bankId).trim());
 
             let bankNode;
-            if (match) {
-                bankNode = treeMap.get(match.id);
+            if (bankMatch) {
+                bankNode = treeMap.get(bankMatch.id);
             } else {
                 // Fallback a los nodos genéricos
                 bankNode = inv.currency === 'USD' ? unassignedUSD : unassignedMXN;
             }
 
-            if (bankNode) {
+            if (bankNode && Array.isArray(bankNode.items)) {
                 bankNode.amount += inv.amount;
 
                 // Nivel 2: Compañía
-                const companyName = inv.company || 'Sin Compañía Asignada';
+                const companyName = inv.company || bankNode.company || 'Sin Compañía';
 
                 // Buscamos el nodo de compañía (que ya debería existir por la inicialización si vino del catálogo)
-                let compNode = bankNode.items.find(c => c.id === companyName);
+                let compNode = bankNode.items.find(c => c && c.id === companyName);
 
                 if (!compNode) {
                     // Si la factura trae una compañía que NO estaba ligada a la cuenta en el catálogo (caso raro o "Sin Asignar")
@@ -164,39 +161,42 @@ const Payments = ({ rawInvoices, setRawInvoices, availableInvoices, setAvailable
                     compNode = findOrCreate(bankNode.items, companyName, displayCompanyName, { meta: companyMeta });
                 }
 
+                // Ajuste de Jerarquía: Saltamos nivel visual de Compañía si es necesario para ir directo a Grupo
+                // Pero mantenemos la estructura interna.
                 if (compNode) {
                     compNode.amount += inv.amount;
 
-                    if (!compNode.items || compNode.items.length === 0) {
-                        compNode.items = CATALOG_GRUPOS.map(g => ({
-                            id: `${g.group}|${g.description}`,
-                            name: g.description,
-                            groupCode: g.group,
+                    const groupCode = inv.group;
+                    const invDesc = inv.meta?.description_grupo_proveedor;
+
+                    // Buscamos si el grupo ya existe en este nodo de compañía para este banco específico
+                    let groupNode = compNode.items.find(g => g.groupCode === groupCode);
+
+                    if (!groupNode) {
+                        // Si no existe, buscamos en el catálogo global para traer la descripción oficial
+                        const catalogGroup = CATALOG_GRUPOS.find(g => g.group === groupCode);
+                        const groupName = catalogGroup ? catalogGroup.description : (invDesc || groupCode);
+
+                        groupNode = {
+                            id: `${groupCode}|${groupName}`,
+                            name: groupName,
+                            groupCode: groupCode,
                             amount: 0,
                             items: [],
                             invoices: [],
-                            meta: g
-                        }));
-                    }
-
-                    const invDesc = inv.meta?.description_grupo_proveedor;
-
-                    // Intentamos encontrar el nodo pre-populado que coincida con código y descripción
-                    let groupNode = compNode.items.find(g =>
-                        g.groupCode === inv.group && (!invDesc || g.name === invDesc)
-                    );
-
-                    if (!groupNode) {
-                        // Si no está en el catálogo, lo creamos dinámicamente
-                        const groupName = invDesc || inv.group || 'Grupo General';
-                        groupNode = findOrCreate(compNode.items, inv.group, groupName);
-                        groupNode.groupCode = inv.group;
+                            meta: catalogGroup || { group: groupCode, description: groupName }
+                        };
+                        compNode.items.push(groupNode);
                     }
 
                     groupNode.amount += inv.amount;
 
                     // Nivel 4: Proveedor
-                    const provNode = findOrCreate(groupNode.items, inv.providerName, inv.providerName);
+                    // Agrupamos proveedores. Si el mismo proveedor tiene facturas en diferentes bancos, 
+                    // aparecerá en ambos bancos por separado, cumpliendo tu requerimiento de segregación por moneda/banco.
+                    const provNode = findOrCreate(groupNode.items,
+                        (inv.providerName || 'Prov Desconocido').toString(),
+                        (inv.providerName || 'Prov Desconocido').toString());
                     provNode.amount += inv.amount;
 
                     // Nivel 5: Facturas (Guardadas en el proveedor)
@@ -265,6 +265,43 @@ const Payments = ({ rawInvoices, setRawInvoices, availableInvoices, setAvailable
         alert(`Se han movido todos los pagos de ${reassignSourceBank.name} al nuevo banco.`);
     };
 
+    // --- LÓGICA DE MOVIMIENTO ENTRE ESTADOS ---
+    const handleAuthorize = (invoicesToMove) => {
+        if (!invoicesToMove || invoicesToMove.length === 0) return;
+
+        const ids = invoicesToMove.map(inv => inv.id);
+
+        // 1. Quitar de la lista actual (Proposal)
+        setRawInvoices(prev => prev.filter(inv => !ids.includes(inv.id)));
+
+        // 2. Agregar a la lista de Autorizados
+        if (setAuthorizedInvoices) {
+            setAuthorizedInvoices(prev => [...prev, ...invoicesToMove]);
+        }
+
+        alert(`Se han autorizado ${invoicesToMove.length} facturas.`);
+    };
+
+    const handleReject = (invoicesToMove) => {
+        if (!invoicesToMove || invoicesToMove.length === 0) return;
+        const ids = invoicesToMove.map(inv => inv.id);
+        setRawInvoices(prev => prev.filter(inv => !ids.includes(inv.id)));
+        if (setRejectedInvoices) {
+            setRejectedInvoices(prev => [...prev, ...invoicesToMove]);
+        }
+        alert(`Se han rechazado ${invoicesToMove.length} facturas.`);
+    };
+
+    const handleRevoke = (invoicesToMove) => {
+        if (!invoicesToMove || invoicesToMove.length === 0) return;
+        const ids = invoicesToMove.map(inv => inv.id);
+        setRawInvoices(prev => prev.filter(inv => !ids.includes(inv.id)));
+        if (setProposalInvoices) {
+            setProposalInvoices(prev => [...prev, ...invoicesToMove]);
+        }
+        alert(`Se ha quitado la autorización de ${invoicesToMove.length} facturas.`);
+    };
+
     // Modal Search handler
     const handleSearchInvoice = () => {
         const found = (availableInvoices || []).find(inv => inv.uuid === searchUuid);
@@ -311,23 +348,21 @@ const Payments = ({ rawInvoices, setRawInvoices, availableInvoices, setAvailable
 
 
     const getSegmentedInvoices = (provider) => {
-        if (!provider) return { fiscal: [], nonFiscal: [] };
+        if (!provider || !Array.isArray(provider.invoices)) return { fiscal: [], nonFiscal: [] };
 
         const fiscal = [];
         const nonFiscal = [];
 
         provider.invoices.forEach(inv => {
-            // Criterio de Usuario:
-            // Fiscal: Tiene UUID.
-            // No Fiscal: Tarcode Verdadero (true) o '1'.
-            // (Asumimos que si tiene UUID es fiscal, si no, revisamos TAR Code, o lo mandamos a No Fiscal por defecto si falta UUID).
+            const hasUuid = inv.uuid && String(inv.uuid).trim().length > 5;
+            const isTarCode = inv.meta?.tar_code === 1 || inv.meta?.tar_code === '1';
 
-            const hasUuid = inv.uuid && inv.uuid.trim().length > 0;
-            const isTarCode = inv.meta?.tar_code === true || inv.meta?.tar_code === '1' || inv.meta?.tar_code === 'Verdadero' || inv.meta?.TAR_Code === true;
-
-            if (hasUuid && !isTarCode) {
+            // REGLA FISCAL ACTUALIZADA:
+            if (hasUuid) {
+                // Si tiene UUID es Fiscal (aunque tenga error de tar_code)
                 fiscal.push(inv);
             } else {
+                // Si NO tiene UUID o es TarCode 1 (y no tiene UUID), es No Fiscal
                 nonFiscal.push(inv);
             }
         });
@@ -357,23 +392,19 @@ const Payments = ({ rawInvoices, setRawInvoices, availableInvoices, setAvailable
 
     // Remove invoice from proposal (Exclude)
     const handleExclude = (invoiceId) => {
-        if (confirm('¿Estás seguro de que deseas excluir esta factura de la propuesta de pago temporalmente?')) {
-            setRawInvoices(prev => prev.filter(inv => inv.id !== invoiceId));
-        }
+        setRawInvoices(prev => prev.filter(inv => inv.id !== invoiceId));
     };
 
     // Regenerate from initial database state (Simulated)
     const handleRegenerate = () => {
-        if (globalAmountInput != kpis.totalToPay || confirm('¿Deseas recalcular la propuesta?')) {
-            setRawInvoices(INITIAL_RAW_INVOICES || []);
-            setGlobalAmountInput((INITIAL_RAW_INVOICES || []).reduce((sum, i) => sum + i.amount, 0) || 0);
-            setGlobalAdjustmentInput(0);
+        if (confirm('¿Deseas limpiar la propuesta actual y sincronizar de nuevo los datos?')) {
+            setRawInvoices([]);
+            setGlobalAmountInput(0);
             setDrillLevel(0);
             setSelectedBank(null);
             setSelectedCompany(null);
             setSelectedGroup(null);
             setSelectedProvider(null);
-            alert("Propuesta regenerada correctamente.");
         }
     };
 
@@ -414,12 +445,25 @@ const Payments = ({ rawInvoices, setRawInvoices, availableInvoices, setAvailable
             {/* Header & Controls */}
             <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
                 <div>
-                    <h1 className="text-2xl font-bold tracking-tight text-slate-800">Gestión de Pagos</h1>
-                    <p className="text-slate-500 mt-1">Autorización y flujo de pagos dinámicos.</p>
+                    <h1 className="text-2xl font-bold tracking-tight text-slate-800">
+                        {isProposal ? 'Gestión de Pagos' : 'Pagos Autorizados'}
+                    </h1>
+                    <p className="text-slate-500 mt-1">
+                        {isProposal ? 'Etapa 1: Refinamiento y autorización de propuesta.' : 'Etapa 2: Control de pagos autorizados para dispersión.'}
+                    </p>
                 </div>
                 <div className="flex flex-wrap gap-2 w-full xl:w-auto">
+                    {isProposal && (
+                        <Button
+                            variant="primary"
+                            className="bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 shadow-lg shadow-blue-200 animate-pulse border-none text-white"
+                            onClick={() => alert("Proceso de refinamiento finalizado. Los pagos autorizados están listos para revisión en el siguiente módulo.")}
+                        >
+                            FINALIZAR PROCESO
+                        </Button>
+                    )}
                     <Button variant="secondary" icon={Download}>Exportar</Button>
-                    <Button variant="dark" icon={Plus} onClick={() => setIsAddModalOpen(true)}>Añadir Factura</Button>
+                    {isProposal && <Button variant="dark" icon={Plus} onClick={() => setIsAddModalOpen(true)}>Añadir Factura</Button>}
                 </div>
             </div>
 
@@ -433,61 +477,43 @@ const Payments = ({ rawInvoices, setRawInvoices, availableInvoices, setAvailable
                 </div>
             )}
 
-            {/* Global Proposal Inputs (JSON #11-13) */}
-            <Card className="bg-slate-50 border-slate-200">
-                <div className="flex flex-col md:flex-row gap-6 items-end">
-                    <div className="flex-1 w-full">
-                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 block">Importe Global a Pagar</label>
-                        <div className="relative">
-                            <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                            <input
-                                type="number"
-                                value={globalAmountInput}
-                                onChange={(e) => setGlobalAmountInput(parseFloat(e.target.value) || 0)}
-                                className={`w-full pl-10 pr-4 py-3 rounded-lg border-2 outline-none font-bold text-lg transition-all ${globalAmountInput > kpis.totalToPay ? 'border-red-300 bg-red-50 text-red-700' : 'border-slate-200 focus:border-primary'}`}
-                            />
+            {/* Solo mostramos el Importe Global en el módulo de Pagos Autorizados */}
+            {isAuthorized && (
+                <Card className="bg-emerald-50 border-emerald-100">
+                    <div className="flex flex-col md:flex-row gap-6 items-end">
+                        <div className="flex-1 w-full">
+                            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 block font-mono">Importe Global Autorizado a Pagar</label>
+                            <div className="relative">
+                                <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-500" size={18} />
+                                <input
+                                    type="number"
+                                    value={globalAmountInput}
+                                    onChange={(e) => setGlobalAmountInput(parseFloat(e.target.value) || 0)}
+                                    className="w-full pl-10 pr-4 py-3 rounded-lg border-2 border-emerald-200 focus:border-emerald-500 outline-none font-bold text-lg transition-all bg-white"
+                                />
+                            </div>
                         </div>
-                        {globalAmountInput > kpis.totalToPay && <p className="text-xs text-red-500 mt-1 font-medium">El importe no puede ser mayor a la propuesta calculada.</p>}
-                    </div>
-                    <div className="flex-1 w-full">
-                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 block">Ajuste Manual</label>
-                        <div className="relative">
-                            <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                            <input
-                                type="number"
-                                value={globalAdjustmentInput}
-                                onChange={(e) => setGlobalAdjustmentInput(parseFloat(e.target.value) || 0)}
-                                className="w-full pl-10 pr-4 py-3 rounded-lg border border-slate-200 outline-none focus:border-primary font-medium"
-                            />
+                        <div className="flex gap-2 w-full md:w-auto">
+                            <Button
+                                variant="success"
+                                icon={CheckCircle2}
+                                onClick={handleGlobalConfirm}
+                                disabled={rawInvoices.length === 0}
+                                className="w-full md:w-auto shadow-lg"
+                            >
+                                Dispersar Pagos (ERP)
+                            </Button>
                         </div>
                     </div>
-                    <div className="flex gap-2 w-full md:w-auto">
-                        {/* Botón Regenerar solo activo si hay cambios (JSON #13) */}
-                        <Button
-                            variant="secondary"
-                            icon={RefreshCw}
-                            onClick={handleRegenerate}
-                            disabled={parseFloat(globalAmountInput) === kpis.totalToPay && parseFloat(globalAdjustmentInput) === 0}
-                        >
-                            Regenerar
-                        </Button>
-                        <Button
-                            variant="primary"
-                            icon={CheckCircle2}
-                            onClick={handleGlobalConfirm}
-                            disabled={!rawInvoices || rawInvoices.length === 0 || globalAmountInput <= 0}
-                            className="w-full md:w-auto"
-                        >
-                            Confirmar Global
-                        </Button>
-                    </div>
-                </div>
-            </Card>
+                </Card>
+            )}
 
             {/* KPIs Grid */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <Card className="relative overflow-hidden group">
-                    <p className="text-xs font-bold text-slate-400 uppercase">Monto Total Propuesta</p>
+                    <p className="text-xs font-bold text-slate-400 uppercase">
+                        {isProposal ? 'Monto Total Propuesta' : 'Monto Total Autorizado'}
+                    </p>
                     <h3 className="text-2xl font-bold text-slate-800 mt-1">{formatCurrency(kpis.totalToPay)}</h3>
                     <div className="absolute right-4 top-4 p-2 bg-blue-50 text-blue-600 rounded-lg"><DollarSign size={20} /></div>
                 </Card>
@@ -522,9 +548,37 @@ const Payments = ({ rawInvoices, setRawInvoices, availableInvoices, setAvailable
                             </button>
                             <div className="h-6 w-px bg-slate-200"></div>
                             <div className="flex items-center gap-1 text-sm overflow-x-auto whitespace-nowrap">
-                                <span className="text-slate-500 font-medium">{selectedBank?.name}</span>
-                                {drillLevel >= 2 && <><ChevronRight size={14} className="text-slate-300" /><span className="text-slate-500">{selectedCompany?.name}</span></>}
-                                {drillLevel >= 3 && <><ChevronRight size={14} className="text-slate-300" /><span className="text-slate-500">{selectedGroup?.name}</span></>}
+                                <button
+                                    onClick={() => { setDrillLevel(0); setSelectedBank(null); setSelectedCompany(null); setSelectedGroup(null); setSelectedProvider(null); }}
+                                    className="text-slate-500 hover:text-primary transition-colors hover:underline"
+                                >
+                                    Bancos
+                                </button>
+                                <ChevronRight size={14} className="text-slate-300" />
+                                <button
+                                    onClick={() => { setDrillLevel(1); setSelectedCompany(null); setSelectedGroup(null); setSelectedProvider(null); }}
+                                    className="text-slate-500 hover:text-primary transition-colors hover:underline"
+                                >
+                                    {selectedBank?.name}
+                                </button>
+                                {drillLevel >= 2 && <>
+                                    <ChevronRight size={14} className="text-slate-300" />
+                                    <button
+                                        onClick={() => { setDrillLevel(2); setSelectedGroup(null); setSelectedProvider(null); }}
+                                        className="text-slate-500 hover:text-primary transition-colors hover:underline"
+                                    >
+                                        {selectedCompany?.name}
+                                    </button>
+                                </>}
+                                {drillLevel >= 3 && <>
+                                    <ChevronRight size={14} className="text-slate-300" />
+                                    <button
+                                        onClick={() => { setDrillLevel(3); setSelectedProvider(null); }}
+                                        className="text-slate-500 hover:text-primary transition-colors hover:underline"
+                                    >
+                                        {selectedGroup?.name}
+                                    </button>
+                                </>}
                                 {drillLevel >= 4 && (
                                     <>
                                         <ChevronRight size={14} className="text-slate-300" />
@@ -569,49 +623,95 @@ const Payments = ({ rawInvoices, setRawInvoices, availableInvoices, setAvailable
                                         return acc;
                                     }, {})
                                 ).map(([bankName, accounts]) => (
-                                    <div key={bankName}>
-                                        <h3 className="font-bold text-slate-700 text-sm uppercase tracking-wider mb-2 flex items-center gap-2">
-                                            <Building2 size={16} className="text-slate-400" /> {bankName}
+                                    <div key={bankName} className="animate-fade-in">
+                                        <h3
+                                            className="font-bold text-slate-700 text-sm uppercase tracking-wider mb-2 flex items-center justify-between cursor-pointer hover:text-primary transition-colors group px-1"
+                                            onClick={() => setCollapsedBanks(prev => prev.includes(bankName) ? prev.filter(b => b !== bankName) : [...prev, bankName])}
+                                        >
+                                            <div className="flex items-center gap-2">
+                                                <Building2 size={16} className="text-slate-400 group-hover:text-primary" /> {bankName}
+                                            </div>
+                                            {collapsedBanks.includes(bankName) ? <ChevronDown size={16} className="text-slate-300" /> : <ChevronUp size={16} className="text-slate-300" />}
                                         </h3>
-                                        <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-                                            <table className="w-full text-sm text-left">
-                                                <thead className="bg-slate-50/80">
-                                                    <tr className="text-xs text-slate-500 font-semibold">
-                                                        <th className="p-3 w-1/4">Banco</th>
-                                                        <th className="p-3 w-1/4">Cuenta</th>
-                                                        <th className="p-3">ID Cuenta</th>
-                                                        <th className="p-3">Moneda</th>
-                                                        <th className="p-3 text-right">Saldo Propuesta</th>
-                                                        <th className="p-3 text-center">Acciones</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody className="divide-y divide-slate-100">
-                                                    {accounts.map(account => (
-                                                        <tr key={account.id} className="hover:bg-blue-50/50 cursor-pointer" onClick={() => { setSelectedBank(account); setDrillLevel(1); }}>
-                                                            <td className="p-3 font-medium text-slate-800">{account.name}</td>
-                                                            <td className="p-3 font-mono text-slate-600">{account.account}</td>
-                                                            <td className="p-3 font-mono text-xs text-slate-500">{account.id}</td>
-                                                            <td className="p-3">
-                                                                <Badge status={account.currency === 'USD' ? 'success' : 'info'}>{account.currency}</Badge>
-                                                            </td>
-                                                            <td className={`p-3 text-right font-bold ${account.amount > 0 ? 'text-slate-800' : 'text-slate-400'}`}>
-                                                                {formatCurrency(account.amount)}
-                                                            </td>
-                                                            <td className="p-3 text-center">
-                                                                <button
-                                                                    className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                                                                    title="Reasignar Saldo"
-                                                                    onClick={(e) => { e.stopPropagation(); openReassignModal(account); }}
-                                                                    disabled={account.amount <= 0}
-                                                                >
-                                                                    <ArrowRightLeft size={16} />
-                                                                </button>
-                                                            </td>
+
+                                        {!collapsedBanks.includes(bankName) && (
+                                            <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden transition-all">
+                                                <table className="w-full text-sm text-left">
+                                                    <thead className="bg-slate-50/80">
+                                                        <tr className="text-xs text-slate-500 font-semibold">
+                                                            <th className="p-3 w-1/4">Banco</th>
+                                                            <th className="p-3 w-1/4">Cuenta</th>
+                                                            <th className="p-3">ID Cuenta</th>
+                                                            <th className="p-3">Moneda</th>
+                                                            <th className="p-3 text-right">Saldo Propuesta</th>
+                                                            <th className="p-3 text-center">Acciones</th>
                                                         </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
-                                        </div>
+                                                    </thead>
+                                                    <tbody className="divide-y divide-slate-100">
+                                                        {accounts.map(account => (
+                                                            <tr key={account.id} className="hover:bg-blue-50/50 cursor-pointer" onClick={() => { setSelectedBank(account); setDrillLevel(1); }}>
+                                                                <td className="p-3 font-medium text-slate-800">{account.name}</td>
+                                                                <td className="p-3 font-mono text-slate-600">{account.account}</td>
+                                                                <td className="p-3 font-mono text-xs text-slate-500">{account.id}</td>
+                                                                <td className="p-3">
+                                                                    <Badge status={account.currency === 'USD' ? 'success' : 'info'}>{account.currency}</Badge>
+                                                                </td>
+                                                                <td className={`p-3 text-right font-bold ${account.amount > 0 ? 'text-slate-800' : 'text-slate-400'}`}>
+                                                                    {formatCurrency(account.amount)}
+                                                                </td>
+                                                                <td className="p-3 text-center min-w-[200px]">
+                                                                    <div className="flex flex-wrap items-center justify-center gap-1">
+                                                                        {isProposal && account.amount > 0 && (
+                                                                            <div className="flex items-center gap-1">
+                                                                                <button
+                                                                                    className="p-2 text-emerald-500 hover:bg-emerald-50 rounded-lg transition-colors"
+                                                                                    title="Autorizar Banco"
+                                                                                    onClick={(e) => { e.stopPropagation(); handleAuthorize(account.invoices); }}
+                                                                                >
+                                                                                    <CheckCircle2 size={16} />
+                                                                                </button>
+                                                                                <button
+                                                                                    className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                                                                                    title="No autorizar Banco"
+                                                                                    onClick={(e) => { e.stopPropagation(); handleReject(account.invoices); }}
+                                                                                >
+                                                                                    <X size={16} />
+                                                                                </button>
+                                                                            </div>
+                                                                        )}
+                                                                        {isAuthorized && (
+                                                                            <>
+                                                                                <Badge status="success">AUTORIZADO</Badge>
+                                                                                <button
+                                                                                    className="mt-1 p-1.5 text-red-500 hover:bg-red-50 rounded flex items-center gap-1 text-[10px] font-bold"
+                                                                                    title="Quitar Autorización"
+                                                                                    onClick={(e) => { e.stopPropagation(); handleRevoke(account.invoices); }}
+                                                                                >
+                                                                                    <ArrowLeft size={12} /> REVERTIR
+                                                                                </button>
+                                                                            </>
+                                                                        )}
+                                                                        {isRejected && (
+                                                                            <Badge status="danger">RECHAZADO</Badge>
+                                                                        )}
+                                                                        {!isRejected && (
+                                                                            <button
+                                                                                className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                                                                                title="Reasignar Saldo"
+                                                                                onClick={(e) => { e.stopPropagation(); openReassignModal(account); }}
+                                                                                disabled={account.amount <= 0}
+                                                                            >
+                                                                                <ArrowRightLeft size={16} />
+                                                                            </button>
+                                                                        )}
+                                                                    </div>
+                                                                </td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        )}
                                     </div>
                                 ))}
                             </div>
@@ -672,13 +772,48 @@ const Payments = ({ rawInvoices, setRawInvoices, availableInvoices, setAvailable
                                             <div className="text-right flex items-center gap-4">
                                                 <div>
                                                     <p className="font-bold text-lg text-slate-800">{formatCurrency(item.amount)}</p>
-                                                    <span className="text-xs text-blue-600 font-medium hover:underline">
+                                                    <span className="text-[10px] text-blue-600 font-bold uppercase tracking-tight">
                                                         {drillLevel === 1 ? 'Ver Grupos de Pagos' :
                                                             drillLevel === 2 ? 'Ver Proveedores' :
                                                                 'Ver Facturas'}
                                                     </span>
                                                 </div>
-                                                <ChevronRight size={18} className="text-slate-300" />
+                                                <div className="flex flex-col items-end gap-1">
+                                                    {isProposal && item.amount > 0 && (
+                                                        <div className="flex items-center gap-1">
+                                                            <button
+                                                                className="p-2 bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-600 hover:text-white transition-all shadow-sm group/btn"
+                                                                title="Autorizar este nivel"
+                                                                onClick={(e) => { e.stopPropagation(); handleAuthorize(item.invoices || []); }}
+                                                            >
+                                                                <CheckCircle2 size={18} />
+                                                            </button>
+                                                            <button
+                                                                className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-600 hover:text-white transition-all shadow-sm group/btn flex items-center justify-center"
+                                                                title="No autorizar este nivel"
+                                                                onClick={(e) => { e.stopPropagation(); handleReject(item.invoices || []); }}
+                                                            >
+                                                                <X size={18} />
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                    {isAuthorized && (
+                                                        <>
+                                                            <span className="text-[9px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100">AUTORIZADO</span>
+                                                            <button
+                                                                className="p-1.5 bg-red-50 text-red-600 rounded-lg hover:bg-red-600 hover:text-white transition-all shadow-sm"
+                                                                title="Quitar Autorización"
+                                                                onClick={(e) => { e.stopPropagation(); handleRevoke(item.invoices || []); }}
+                                                            >
+                                                                <ArrowLeft size={14} />
+                                                            </button>
+                                                        </>
+                                                    )}
+                                                    {isRejected && (
+                                                        <span className="text-[9px] font-black text-red-600 bg-red-50 px-2 py-0.5 rounded border border-red-100">RECHAZADO</span>
+                                                    )}
+                                                    <ChevronRight size={18} className="text-slate-300" />
+                                                </div>
                                             </div>
                                         </div>
                                     ));
@@ -697,12 +832,33 @@ const Payments = ({ rawInvoices, setRawInvoices, availableInvoices, setAvailable
                                 invoiceSearch === '' ||
                                 (inv.uuid || '').toLowerCase().includes(invoiceSearch.toLowerCase()) ||
                                 inv.amount.toString().includes(invoiceSearch) ||
-                                inv.id.toLowerCase().includes(invoiceSearch.toLowerCase())
+                                String(inv.meta?.invoice || '').toLowerCase().includes(invoiceSearch.toLowerCase())
                             );
 
+                            // Lógica de Ordenamiento Dinámico
+                            const sortData = (data) => {
+                                if (!sortConfig.key) return data;
+                                return [...data].sort((a, b) => {
+                                    const aVal = a.meta?.[sortConfig.key] ?? a[sortConfig.key];
+                                    const bVal = b.meta?.[sortConfig.key] ?? b[sortConfig.key];
+
+                                    if (aVal === bVal) return 0;
+
+                                    // Manejo de nulos
+                                    if (aVal === null || aVal === undefined) return 1;
+                                    if (bVal === null || bVal === undefined) return -1;
+
+                                    const result = aVal < bVal ? -1 : 1;
+                                    return sortConfig.direction === 'asc' ? result : -result;
+                                });
+                            };
+
+                            const sortedFiscal = sortData(filteredFiscal);
+                            const sortedNonFiscal = sortData(nonFiscal);
+
                             // Lógica de Paginación
-                            const totalPages = Math.ceil(filteredFiscal.length / ITEMS_PER_PAGE);
-                            const paginatedFiscal = filteredFiscal.slice(
+                            const totalPages = Math.ceil(sortedFiscal.length / ITEMS_PER_PAGE);
+                            const paginatedFiscal = sortedFiscal.slice(
                                 (invoicePage - 1) * ITEMS_PER_PAGE,
                                 invoicePage * ITEMS_PER_PAGE
                             );
@@ -712,10 +868,14 @@ const Payments = ({ rawInvoices, setRawInvoices, availableInvoices, setAvailable
                                     {/* Sección Fiscales */}
                                     <div className="space-y-3">
                                         <div className="flex flex-col sm:flex-row justify-between items-end sm:items-center gap-4 mb-2">
-                                            <div className="flex items-center gap-2">
+                                            <div
+                                                className="flex items-center gap-2 cursor-pointer group hover:opacity-80 transition-opacity"
+                                                onClick={() => setIsFiscalExpanded(!isFiscalExpanded)}
+                                            >
                                                 <div className="bg-emerald-100 text-emerald-700 p-1.5 rounded-lg"><FileText size={18} /></div>
                                                 <h3 className="font-bold text-slate-700">Facturas Fiscales (UUID)</h3>
                                                 <span className="bg-slate-100 text-slate-600 text-xs px-2 py-0.5 rounded-full font-bold">{filteredFiscal.length}</span>
+                                                {isFiscalExpanded ? <ChevronUp size={16} className="text-slate-400" /> : <ChevronDown size={16} className="text-slate-400" />}
                                             </div>
 
                                             {/* Barra de búsqueda local */}
@@ -731,36 +891,87 @@ const Payments = ({ rawInvoices, setRawInvoices, availableInvoices, setAvailable
                                             </div>
                                         </div>
 
-                                        {filteredFiscal.length > 0 ? (
+                                        {isFiscalExpanded && (filteredFiscal.length > 0 ? (
                                             <div className="bg-white border border-emerald-100 rounded-xl overflow-hidden shadow-sm">
-                                                <table className="w-full text-left border-collapse">
-                                                    <thead className="bg-emerald-50/50">
-                                                        <tr className="text-xs uppercase text-slate-600 font-bold tracking-wider">
-                                                            <th className="p-4">UUID / Folio</th>
-                                                            <th className="p-4">Vencimiento</th>
-                                                            <th className="p-4 text-right">Monto</th>
-                                                            <th className="p-4 text-center">Acción</th>
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody className="divide-y divide-emerald-50 text-sm">
-                                                        {paginatedFiscal.map(inv => (
-                                                            <tr key={inv.id} className="hover:bg-slate-50">
-                                                                <td className="p-4">
-                                                                    <div className="flex items-center gap-2">
-                                                                        <div className="font-mono text-xs text-slate-500">{inv.uuid}</div>
-                                                                        {inv.meta?.hasFiscalError && <Badge status="danger">Error Fiscal</Badge>}
-                                                                    </div>
-                                                                    <div className="text-xs text-slate-400">ID: {inv.id}</div>
-                                                                </td>
-                                                                <td className="p-4 text-slate-600">{formatDate(inv.dueDate)}</td>
-                                                                <td className="p-4 text-right font-bold text-slate-800">{formatCurrency(inv.amount)}</td>
-                                                                <td className="p-4 text-center">
-                                                                    <button onClick={() => handleExclude(inv.id)} className="text-slate-400 hover:text-red-500 p-1 rounded hover:bg-red-50"><X size={16} /></button>
-                                                                </td>
+                                                <div className="overflow-x-auto">
+                                                    <table className="w-full text-left border-collapse min-w-[1600px]">
+                                                        <thead className="bg-emerald-50/50">
+                                                            <tr className="text-xs uppercase text-slate-600 font-bold tracking-wider">
+                                                                {[
+                                                                    { label: 'Invoice', key: 'invoice' },
+                                                                    { label: 'Posted', key: 'posted' },
+                                                                    { label: 'Balance mn', key: 'balance_mn', align: 'right' },
+                                                                    { label: 'New Balance MN', key: 'new_balance_mn', align: 'right' },
+                                                                    { label: 'Due date', key: 'due_date' },
+                                                                    { label: 'Currency code', key: 'currency_code', align: 'center' },
+                                                                    { label: 'Open payable', key: 'openpayable' },
+                                                                    { label: 'Description Tran Doc Type', key: 'description_tran_doc_type' },
+                                                                    { label: 'Transac_ref_c', key: 'transac_ref_c' },
+                                                                    { label: 'Transac_num_c', key: 'transac_num_c' },
+                                                                    { label: 'Fiscal Folio', key: 'uuid' },
+                                                                    { label: 'TAR Code', key: 'tar_code', align: 'center' },
+                                                                    { label: 'HoldInvoice', key: 'holdinvoice', align: 'center' },
+                                                                    { label: 'Hold Payments', key: 'hold_payments', align: 'center' },
+                                                                    { label: 'MsgHoldPayment_c', key: 'msgholdpayment_c' }
+                                                                ].map((col) => (
+                                                                    <th
+                                                                        key={col.key}
+                                                                        className={`p-4 whitespace-nowrap cursor-pointer hover:bg-emerald-100/50 transition-colors ${col.align === 'right' ? 'text-right' : col.align === 'center' ? 'text-center' : ''}`}
+                                                                        onClick={() => {
+                                                                            const dir = sortConfig.key === col.key && sortConfig.direction === 'asc' ? 'desc' : 'asc';
+                                                                            setSortConfig({ key: col.key, direction: dir });
+                                                                        }}
+                                                                    >
+                                                                        <div className={`flex items-center gap-1 ${col.align === 'right' ? 'justify-end' : col.align === 'center' ? 'justify-center' : ''}`}>
+                                                                            {col.label}
+                                                                            <ArrowUpDown size={12} className={sortConfig.key === col.key ? 'text-primary' : 'text-slate-300'} />
+                                                                        </div>
+                                                                    </th>
+                                                                ))}
+                                                                <th className="p-4 text-center sticky right-0 bg-emerald-50/50">Acción</th>
                                                             </tr>
-                                                        ))}
-                                                    </tbody>
-                                                </table>
+                                                        </thead>
+                                                        <tbody className="divide-y divide-emerald-50 text-sm">
+                                                            {paginatedFiscal.map(inv => (
+                                                                <tr key={inv.id} className={`hover:bg-slate-50 transition-colors ${isRejected ? 'bg-red-50/60' : ''}`}>
+                                                                    <td className="p-4 font-medium text-slate-700">{String(inv.meta?.invoice ?? '')}</td>
+                                                                    <td className="p-4 font-mono text-xs">{String(inv.meta?.posted ?? '')}</td>
+                                                                    <td className="p-4 text-right">{formatCurrency(inv.meta?.balance_mn)}</td>
+                                                                    <td className="p-4 text-right font-bold">{formatCurrency(inv.meta?.new_balance_mn)}</td>
+                                                                    <td className="p-4 whitespace-nowrap">{String(inv.meta?.due_date ?? '')}</td>
+                                                                    <td className="p-4 text-center font-bold text-xs">{String(inv.meta?.currency_code ?? '')}</td>
+                                                                    <td className="p-4 font-mono text-xs">{String(inv.meta?.openpayable ?? '')}</td>
+                                                                    <td className="p-4 text-xs">{String(inv.meta?.description_tran_doc_type ?? '')}</td>
+                                                                    <td className="p-4 font-mono text-[10px] text-slate-500">{String(inv.meta?.transac_ref_c ?? '')}</td>
+                                                                    <td className="p-4 font-mono text-[10px] text-slate-500">{String(inv.meta?.transac_num_c ?? '')}</td>
+                                                                    <td className="p-4 font-mono text-[10px] text-slate-400">{String(inv.uuid ?? '')}</td>
+                                                                    <td className="p-4 text-center">{String(inv.meta?.tar_code ?? '')}</td>
+                                                                    <td className={`p-4 text-center font-semibold ${inv.meta?.isHoldInvoice ? 'text-red-600 bg-red-50' : ''}`}>
+                                                                        {String(inv.meta?.holdinvoice ?? '')}
+                                                                    </td>
+                                                                    <td className={`p-4 text-center font-semibold ${inv.meta?.isHoldPayment ? 'text-red-600 bg-red-50' : ''}`}>
+                                                                        {String(inv.meta?.hold_payments ?? '')}
+                                                                    </td>
+                                                                    <td className="p-4 text-xs italic text-slate-500 max-w-xs truncate" title={String(inv.meta?.msgholdpayment_c ?? '')}>
+                                                                        {String(inv.meta?.msgholdpayment_c ?? '')}
+                                                                    </td>
+                                                                    <td className="p-4 text-center sticky right-0 bg-white group-hover:bg-slate-50 min-w-[180px]">
+                                                                        {isProposal ? (
+                                                                            <div className="flex items-center justify-center gap-1">
+                                                                                <button onClick={() => handleAuthorize([inv])} className="text-emerald-500 hover:bg-emerald-50 p-1.5 rounded" title="Autorizar Factura"><CheckCircle2 size={16} /></button>
+                                                                                <button onClick={() => handleExclude(inv.id)} className="text-slate-400 hover:text-red-500 p-1.5 rounded hover:bg-red-50" title="Excluir"><X size={16} /></button>
+                                                                            </div>
+                                                                        ) : (
+                                                                            <div className="flex items-center justify-center">
+                                                                                <Badge status="success">AUTORIZADO</Badge>
+                                                                            </div>
+                                                                        )}
+                                                                    </td>
+                                                                </tr>
+                                                            ))}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
 
                                                 {/* Controles de Paginación */}
                                                 {totalPages > 1 && (
@@ -789,43 +1000,97 @@ const Payments = ({ rawInvoices, setRawInvoices, availableInvoices, setAvailable
                                             <div className="text-sm text-slate-400 italic p-8 text-center border border-dashed rounded-xl bg-slate-50">
                                                 {invoiceSearch ? 'No se encontraron facturas con ese criterio.' : 'No hay facturas fiscales disponibles.'}
                                             </div>
-                                        )}
+                                        ))}
                                     </div>
 
                                     {/* Sección NO Fiscales */}
                                     <div className="space-y-3">
-                                        <div className="flex items-center gap-2 mb-2 pt-4 border-t border-dashed border-slate-200">
+                                        <div
+                                            className="flex items-center gap-2 mb-2 pt-4 border-t border-dashed border-slate-200 cursor-pointer group hover:opacity-80 transition-opacity"
+                                            onClick={() => setIsNonFiscalExpanded(!isNonFiscalExpanded)}
+                                        >
                                             <div className="bg-amber-100 text-amber-700 p-1.5 rounded-lg"><ShieldAlert size={18} /></div>
                                             <h3 className="font-bold text-slate-700">No Fiscales / Anticipos (TAR Code)</h3>
                                             <span className="bg-slate-100 text-slate-600 text-xs px-2 py-0.5 rounded-full font-bold">{nonFiscal.length}</span>
+                                            {isNonFiscalExpanded ? <ChevronUp size={16} className="text-slate-400" /> : <ChevronDown size={16} className="text-slate-400" />}
                                         </div>
 
-                                        {nonFiscal.length > 0 ? (
+                                        {isNonFiscalExpanded && (nonFiscal.length > 0 ? (
                                             <div className="bg-white border border-amber-100 rounded-xl overflow-hidden shadow-sm">
-                                                <table className="w-full text-left border-collapse">
-                                                    <thead className="bg-amber-50/50">
-                                                        <tr className="text-xs uppercase text-slate-600 font-bold tracking-wider">
-                                                            <th className="p-4">Referencia</th>
-                                                            <th className="p-4">Tipo</th>
-                                                            <th className="p-4 text-right">Monto</th>
-                                                            <th className="p-4 text-center">Acción</th>
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody className="divide-y divide-amber-50 text-sm">
-                                                        {nonFiscal.map(inv => (
-                                                            <tr key={inv.id} className="hover:bg-slate-50">
-                                                                <td className="p-4 font-medium text-slate-700">{inv.id}</td>
-                                                                <td className="p-4"><Badge status="warning">No Fiscal</Badge></td>
-                                                                <td className="p-4 text-right font-bold text-slate-800">{formatCurrency(inv.amount)}</td>
-                                                                <td className="p-4 text-center">
-                                                                    <button onClick={() => handleExclude(inv.id)} className="text-slate-400 hover:text-red-500 p-1 rounded hover:bg-red-50"><X size={16} /></button>
-                                                                </td>
+                                                <div className="overflow-x-auto">
+                                                    <table className="w-full text-left border-collapse min-w-[1600px]">
+                                                        <thead className="bg-amber-50/50">
+                                                            <tr className="text-xs uppercase text-slate-600 font-bold tracking-wider">
+                                                                {[
+                                                                    { label: 'Invoice', key: 'invoice' },
+                                                                    { label: 'Posted', key: 'posted' },
+                                                                    { label: 'Balance mn', key: 'balance_mn', align: 'right' },
+                                                                    { label: 'New Balance MN', key: 'new_balance_mn', align: 'right' },
+                                                                    { label: 'Due date', key: 'due_date' },
+                                                                    { label: 'Currency code', key: 'currency_code', align: 'center' },
+                                                                    { label: 'Open payable', key: 'openpayable' },
+                                                                    { label: 'Description Tran Doc Type', key: 'description_tran_doc_type' },
+                                                                    { label: 'Transac_ref_c', key: 'transac_ref_c' },
+                                                                    { label: 'Transac_num_c', key: 'transac_num_c' },
+                                                                    { label: 'Fiscal Folio', key: 'uuid' },
+                                                                    { label: 'TAR Code', key: 'tar_code', align: 'center' },
+                                                                    { label: 'HoldInvoice', key: 'holdinvoice', align: 'center' },
+                                                                    { label: 'Hold Payments', key: 'hold_payments', align: 'center' },
+                                                                    { label: 'MsgHoldPayment_c', key: 'msgholdpayment_c' }
+                                                                ].map((col) => (
+                                                                    <th
+                                                                        key={col.key}
+                                                                        className={`p-4 whitespace-nowrap cursor-pointer hover:bg-amber-100/50 transition-colors ${col.align === 'right' ? 'text-right' : col.align === 'center' ? 'text-center' : ''}`}
+                                                                        onClick={() => {
+                                                                            const dir = sortConfig.key === col.key && sortConfig.direction === 'asc' ? 'desc' : 'asc';
+                                                                            setSortConfig({ key: col.key, direction: dir });
+                                                                        }}
+                                                                    >
+                                                                        <div className={`flex items-center gap-1 ${col.align === 'right' ? 'justify-end' : col.align === 'center' ? 'justify-center' : ''}`}>
+                                                                            {col.label}
+                                                                            <ArrowUpDown size={12} className={sortConfig.key === col.key ? 'text-primary' : 'text-slate-300'} />
+                                                                        </div>
+                                                                    </th>
+                                                                ))}
+                                                                <th className="p-4 text-center sticky right-0 bg-amber-50/50">Acción</th>
                                                             </tr>
-                                                        ))}
-                                                    </tbody>
-                                                </table>
+                                                        </thead>
+                                                        <tbody className="divide-y divide-amber-50 text-sm">
+                                                            {sortedNonFiscal.map(inv => (
+                                                                <tr key={inv.id} className={`hover:bg-slate-50 transition-colors ${isRejected ? 'bg-red-50/60' : ''}`}>
+                                                                    <td className="p-4 font-medium text-slate-700">{String(inv.meta?.invoice ?? '')}</td>
+                                                                    <td className="p-4 font-mono text-xs">{String(inv.meta?.posted ?? '')}</td>
+                                                                    <td className="p-4 text-right">{formatCurrency(inv.meta?.balance_mn)}</td>
+                                                                    <td className="p-4 text-right font-bold">{formatCurrency(inv.meta?.new_balance_mn)}</td>
+                                                                    <td className="p-4 whitespace-nowrap">{String(inv.meta?.due_date ?? '')}</td>
+                                                                    <td className="p-4 text-center font-bold text-xs">{String(inv.meta?.currency_code ?? '')}</td>
+                                                                    <td className="p-4 font-mono text-xs">{String(inv.meta?.openpayable ?? '')}</td>
+                                                                    <td className="p-4 text-xs">{String(inv.meta?.description_tran_doc_type ?? '')}</td>
+                                                                    <td className="p-4 font-mono text-[10px] text-slate-500">{String(inv.meta?.transac_ref_c ?? '')}</td>
+                                                                    <td className="p-4 font-mono text-[10px] text-slate-500">{String(inv.meta?.transac_num_c ?? '')}</td>
+                                                                    <td className="p-4 font-mono text-[10px] text-slate-400">{String(inv.uuid ?? '')}</td>
+                                                                    <td className="p-4 text-center">{String(inv.meta?.tar_code ?? '')}</td>
+                                                                    <td className={`p-4 text-center font-semibold ${inv.meta?.isHoldInvoice ? 'text-red-600 bg-red-50' : ''}`}>
+                                                                        {String(inv.meta?.holdinvoice ?? '')}
+                                                                    </td>
+                                                                    <td className={`p-4 text-center font-semibold ${inv.meta?.isHoldPayment ? 'text-red-600 bg-red-50' : ''}`}>
+                                                                        {String(inv.meta?.hold_payments ?? '')}
+                                                                    </td>
+                                                                    <td className="p-4 text-xs italic text-slate-500 max-w-xs truncate" title={String(inv.meta?.msgholdpayment_c ?? '')}>
+                                                                        {String(inv.meta?.msgholdpayment_c ?? '')}
+                                                                    </td>
+                                                                    <td className="p-4 text-center sticky right-0 bg-white group-hover:bg-slate-50">
+                                                                        <button onClick={() => handleExclude(inv.id)} className="text-slate-400 hover:text-red-500 p-1 rounded hover:bg-red-50"><X size={16} /></button>
+                                                                    </td>
+                                                                </tr>
+                                                            ))}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
                                             </div>
-                                        ) : <div className="text-sm text-slate-400 italic p-4 border border-dashed rounded-xl">No hay registros no fiscales.</div>}
+                                        ) : (
+                                            <div className="text-sm text-slate-400 italic p-4 border border-dashed rounded-xl">No hay registros no fiscales.</div>
+                                        ))}
                                     </div>
                                 </div>
                             );

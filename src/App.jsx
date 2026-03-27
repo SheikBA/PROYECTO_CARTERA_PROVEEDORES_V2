@@ -4,11 +4,22 @@ import Payments from './pages/Payments';
 import DataLoad from './layout/DataLoad';
 import Login from './pages/Login';
 import Templates from './pages/Templates';
-import { Briefcase } from 'lucide-react';
+import { Briefcase, DollarSign, CheckCircle2, ShieldAlert, FileText, Database, Layout } from 'lucide-react';
 
-// Import global mock data
-import { INITIAL_RAW_INVOICES, AVAILABLE_INVOICES, INITIAL_TRACKING_DATA } from './data/mockData';
-import { MENU_ITEMS as DEFAULT_MENU_ITEMS } from './layout/menuItems';
+// Nueva Estructura de Menú solicitada
+const DEFAULT_MENU_ITEMS = [
+  { id: 'dataload', label: 'Carga de Datos', icon: Database },
+  { id: 'payments', label: 'Gestión de Pagos', icon: DollarSign },
+  { id: 'authorized-payments', label: 'Pagos Autorizados', icon: CheckCircle2 },
+  {
+    id: 'rejected-payments', label: 'Pagos rechazados', icon: ShieldAlert, subItems: [
+      { id: 'rejected-h2h', label: 'Pagos rechazados H2H' },
+      { id: 'rejected-general', label: 'Pagos rechazados general' }
+    ]
+  },
+  { id: 'reports', label: 'Reporteria', icon: FileText },
+  { id: 'templates', label: 'Plantillas', icon: Layout },
+];
 
 const App = () => {
   // Estado de la sesión (simulado)
@@ -21,9 +32,11 @@ const App = () => {
   const [menuItems, setMenuItems] = useState(DEFAULT_MENU_ITEMS);
 
   // Estado global de facturas (compartido entre Carga y Pagos)
-  const [rawInvoices, setRawInvoices] = useState(INITIAL_RAW_INVOICES || []);
-  const [availableInvoices, setAvailableInvoices] = useState(AVAILABLE_INVOICES || []);
-  const [trackingData, setTrackingData] = useState(INITIAL_TRACKING_DATA || []);
+  const [rawInvoices, setRawInvoices] = useState([]);
+  const [authorizedInvoices, setAuthorizedInvoices] = useState([]);
+  const [rejectedInvoices, setRejectedInvoices] = useState([]);
+  const [availableInvoices, setAvailableInvoices] = useState([]);
+  const [trackingData, setTrackingData] = useState([]);
 
   // Estado para catálogos dinámicos (Bancos, Empresas, Grupos)
   const [catalogs, setCatalogs] = useState({
@@ -109,8 +122,10 @@ const App = () => {
     const savedData = localStorage.getItem('cartera_app_cache');
     if (savedData) {
       try {
-        const { invoices, tracking, cats } = JSON.parse(savedData);
+        const { invoices, authorized, rejected, tracking, cats } = JSON.parse(savedData);
         if (invoices) setRawInvoices(invoices);
+        if (authorized) setAuthorizedInvoices(authorized);
+        if (rejected) setRejectedInvoices(rejected);
         if (tracking) setTrackingData(tracking);
         if (cats) setCatalogs(cats);
       } catch (e) {
@@ -121,8 +136,12 @@ const App = () => {
 
   // --- PERSISTENCIA: Guardar cambios automáticamente ---
   useEffect(() => {
-    const dataToSave = { invoices: rawInvoices, tracking: trackingData, cats: catalogs };
-    localStorage.setItem('cartera_app_cache', JSON.stringify(dataToSave));
+    const dataToSave = { invoices: rawInvoices, authorized: authorizedInvoices, rejected: rejectedInvoices, tracking: trackingData, cats: catalogs };
+    try {
+      localStorage.setItem('cartera_app_cache', JSON.stringify(dataToSave));
+    } catch (e) {
+      console.warn("El volumen de datos es demasiado grande para el caché local. Los cambios no se persistirán al refrescar.");
+    }
   }, [rawInvoices, trackingData, catalogs]);
 
   const handleLogin = (user) => {
@@ -153,11 +172,47 @@ const App = () => {
           <Payments
             rawInvoices={rawInvoices}
             setRawInvoices={setRawInvoices}
+            setProposalInvoices={setRawInvoices}
+            authorizedInvoices={authorizedInvoices}
+            setAuthorizedInvoices={setAuthorizedInvoices}
+            setRejectedInvoices={setRejectedInvoices}
             availableInvoices={availableInvoices}
             setAvailableInvoices={setAvailableInvoices}
             trackingData={trackingData}
             setTrackingData={setTrackingData}
             catalogs={catalogs}
+            mode="proposal"
+          />
+        );
+      case 'authorized-payments':
+        return (
+          <Payments
+            rawInvoices={authorizedInvoices}
+            setRawInvoices={setAuthorizedInvoices}
+            availableInvoices={availableInvoices}
+            setAvailableInvoices={setAvailableInvoices}
+            trackingData={trackingData}
+            setTrackingData={setTrackingData}
+            catalogs={catalogs}
+            mode="authorized"
+          />
+        );
+      case 'rejected-h2h':
+      case 'rejected-general':
+        return (
+          <Payments
+            rawInvoices={rejectedInvoices}
+            setRawInvoices={setRejectedInvoices}
+            setProposalInvoices={setRawInvoices}
+            authorizedInvoices={authorizedInvoices}
+            setAuthorizedInvoices={setAuthorizedInvoices}
+            setRejectedInvoices={setRejectedInvoices}
+            availableInvoices={availableInvoices}
+            setAvailableInvoices={setAvailableInvoices}
+            trackingData={trackingData}
+            setTrackingData={setTrackingData}
+            catalogs={catalogs}
+            mode="rejected"
           />
         );
       case 'dataload':
@@ -165,7 +220,6 @@ const App = () => {
           <DataLoad
             setRawInvoices={setRawInvoices}
             setCurrentModule={setCurrentModule}
-            setCatalogs={setCatalogs}
           />
         );
       default:

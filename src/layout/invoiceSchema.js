@@ -45,8 +45,10 @@ export const invoiceSchema = z.object({
     name: z.any().optional(),
     company: z.any().optional(),
     supplier_id: z.any().optional(),
-    // Nueva columna agregada por el usuario en el Excel para facilitar la agrupación
+    // Columnas para identificación de Banco (Cuenta Pagadora)
     bancos: z.any().optional(),
+    banco: z.any().optional(),
+    mxfiscalfolio: z.any().optional(), // Aseguramos captura de la columna exacta
 
     group_proveedor: z.any().optional(),
     description_grupo_proveedor: z.any().optional(),
@@ -131,9 +133,15 @@ export const invoiceSchema = z.object({
     const tarCodeVal = data.tar_code;
     // Tarcode es 1, '1' o Verdadero
     const isTarCode = tarCodeVal === 1 || tarCodeVal === '1' || parseBoolean(tarCodeVal);
-    const hasValidUUID = isValidUUID(data.fiscal_folio);
 
-    // ERROR FISCAL: Tiene TAR Code 1 (Dice ser No Fiscal) PERO tiene UUID válido (Es Fiscal).
+    // Priorizamos mxfiscalfolio (Columna AR del Excel según tu indicación)
+    const uuidSource = data.mxfiscalfolio || data.fiscal_folio;
+    const hasValidUUID = isValidUUID(uuidSource);
+
+    // REGLA: Es fiscal solo si tiene UUID y el TarCode NO es 1.
+    const isFiscal = hasValidUUID && !isTarCode;
+
+    // ERROR FISCAL: Si tiene UUID pero marcaron TarCode 1 (Inconsistencia de registro).
     const hasFiscalError = isTarCode && hasValidUUID;
 
     // 7. Bloqueo de Factura pero desbloqueable (Columna AC - HoldInvoice)
@@ -146,8 +154,8 @@ export const invoiceSchema = z.object({
 
     return {
         // Estructura plana requerida por Payments.jsx
-        id: data.fiscal_folio || `INV-${data.invoice || Math.random().toString(36).substr(2, 9)}`,
-        uuid: data.fiscal_folio, // Útil para búsquedas
+        id: uuidSource || `INV-${data.invoice || Math.random().toString(36).substr(2, 9)}`,
+        uuid: uuidSource,
         providerName: String(rawName).trim(),
         amount: amount,
         currency: currency,
@@ -158,9 +166,11 @@ export const invoiceSchema = z.object({
         // Usamos el ID del grupo si existe, si no 'G-001'
         group: data.group_proveedor || 'Sin Grupo',
 
-        // Priorizamos la columna explicita 'BANCOS' del Excel si existe,
-        // si no, usamos la lógica por defecto de la moneda.
-        bankId: data.bancos || (currency === 'USD' ? 'PENDIENTE-USD' : 'PENDIENTE-MXN'),
+        // Prioridad: Columna 'BANCO' > 'BANCOS' > Lógica por moneda (Fallback)
+        // Normalizamos el ID quitando decimales de Excel
+        bankId: (data.banco || data.bancos)
+            ? String(data.banco || data.bancos).split('.')[0].trim()
+            : (currency === 'USD' ? 'PENDIENTE-USD' : 'PENDIENTE-MXN'),
 
         // Guardamos TODA la data original en 'meta' por si se necesita ver detalle
         // Agregamos las banderas calculadas para usarlas fácilmente en el frontend (iconos, alertas, filtros)
@@ -174,6 +184,7 @@ export const invoiceSchema = z.object({
             isHoldPayment,
             isPosted,
             isHoldInvoice,
+            isFiscal,
             hasFiscalError, // IMPORTANTE: Mostrar alerta si esto es true
             isPayable
         }

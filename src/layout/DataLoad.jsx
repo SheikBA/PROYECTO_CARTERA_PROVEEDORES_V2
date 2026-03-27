@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
-import { Upload, FileSpreadsheet, AlertCircle, CheckCircle2, Save, Trash2, Database, RefreshCw, BookOpen } from 'lucide-react';
+import { Upload, FileSpreadsheet, AlertCircle, CheckCircle2, Save, Trash2, Database } from 'lucide-react';
 import Button from '../components/Button';
 import Card from '../components/Card';
 import { parseExcelFile } from './excelReader';
 import { invoicesArraySchema } from './invoiceSchema';
 
-const DataLoad = ({ setRawInvoices, setCurrentModule, setCatalogs }) => {
+const DataLoad = ({ setRawInvoices, setCurrentModule }) => {
     const [previewData, setPreviewData] = useState([]);
     const [error, setError] = useState(null);
     const [loading, setLoading] = useState(false);
@@ -41,26 +41,6 @@ const DataLoad = ({ setRawInvoices, setCurrentModule, setCatalogs }) => {
         } catch (err) {
             console.error(err);
             setError("Error crítico al procesar el archivo.");
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    // Función A: Cargar SOLO Catálogos (JSONs)
-    const handleLoadCatalogs = async () => {
-        setLoading(true);
-        setError(null);
-        try {
-            const response = await fetch('http://localhost:5000/api/catalogs');
-            if (!response.ok) throw new Error("Error conectando con API de catálogos");
-
-            const jsonCatalogs = await response.json();
-            if (setCatalogs) setCatalogs(jsonCatalogs);
-
-            alert("¡Catálogos cargados correctamente! Ahora puedes ver la estructura en 'Gestión de Pagos'.");
-        } catch (err) {
-            console.error(err);
-            setError(`Error cargando catálogos: ${err.message}`);
         } finally {
             setLoading(false);
         }
@@ -142,13 +122,13 @@ const DataLoad = ({ setRawInvoices, setCurrentModule, setCatalogs }) => {
                     </h3>
 
                     <div className="flex gap-4 mt-6">
-                        {/* Botón 1: Cargar Catálogos */}
-                        <Button variant="secondary" icon={BookOpen} onClick={handleLoadCatalogs} disabled={loading}>
-                            Cargar Catálogos
-                        </Button>
-
-                        {/* Botón 2: Sincronizar Datos (Excel) */}
-                        <Button variant="primary" icon={Database} onClick={handleLoadInvoicesOnly} disabled={loading}>
+                        <Button
+                            variant="primary"
+                            icon={Database}
+                            onClick={handleLoadInvoicesOnly}
+                            disabled={loading}
+                            title="Lee el archivo FUENTE_DATOS..xlsx desde la carpeta del servidor"
+                        >
                             Sincronizar Local
                         </Button>
 

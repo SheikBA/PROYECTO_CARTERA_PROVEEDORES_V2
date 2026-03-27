@@ -1,8 +1,14 @@
-import React from 'react';
-import { Landmark, ChevronLeft, ChevronRight, LogOut, ArrowUp, ArrowDown } from 'lucide-react';
+import React, { useState } from 'react';
+import { Landmark, ChevronLeft, ChevronRight, LogOut, ArrowUp, ArrowDown, ChevronDown } from 'lucide-react';
 import { APP_VERSION } from '../data/versionHistory';
 
 const Sidebar = ({ sidebarCollapsed, setSidebarCollapsed, currentModule, setCurrentModule, onLogout, menuItems = [], onMoveMenuItem }) => {
+    const [expandedMenus, setExpandedMenus] = useState({});
+
+    const toggleSubmenu = (id) => {
+        setExpandedMenus(prev => ({ ...prev, [id]: !prev[id] }));
+    };
+
     return (
         <aside className={`${sidebarCollapsed ? 'w-20' : 'w-64'} bg-surface border-r border-slate-200 transition-all duration-300 flex flex-col z-20 shadow-lg relative`}>
             <div className="h-16 flex items-center justify-center border-b border-slate-100 relative shrink-0">
@@ -28,14 +34,42 @@ const Sidebar = ({ sidebarCollapsed, setSidebarCollapsed, currentModule, setCurr
             <nav className="flex-1 py-6 px-3 space-y-1 overflow-y-auto">
                 {menuItems.map((item, index) => (
                     <div key={item.id} className="relative group">
-                        <button
-                            onClick={() => setCurrentModule(item.id)}
-                            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all ${currentModule === item.id ? 'bg-primary text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
-                            title={sidebarCollapsed ? item.label : ''}
-                        >
-                            <item.icon size={20} className={currentModule === item.id ? 'text-white' : ''} />
-                            {!sidebarCollapsed && <span className="font-medium text-sm whitespace-nowrap">{item.label}</span>}
-                        </button>
+                        <div className="flex flex-col">
+                            <button
+                                onClick={() => {
+                                    if (item.subItems) {
+                                        toggleSubmenu(item.id);
+                                    } else {
+                                        setCurrentModule(item.id);
+                                    }
+                                }}
+                                className={`w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg transition-all ${currentModule === item.id || currentModule.startsWith(item.id) ? 'bg-primary/10 text-primary' : 'text-slate-500 hover:bg-slate-50'}`}
+                                title={sidebarCollapsed ? item.label : ''}
+                            >
+                                <div className="flex items-center gap-3">
+                                    <item.icon size={20} />
+                                    {!sidebarCollapsed && <span className="font-medium text-sm whitespace-nowrap">{item.label}</span>}
+                                </div>
+                                {!sidebarCollapsed && item.subItems && (
+                                    <ChevronDown size={14} className={`transition-transform ${expandedMenus[item.id] ? 'rotate-180' : ''}`} />
+                                )}
+                            </button>
+
+                            {/* Submódulos */}
+                            {!sidebarCollapsed && item.subItems && expandedMenus[item.id] && (
+                                <div className="ml-9 mt-1 space-y-1 border-l border-slate-200 pl-2">
+                                    {item.subItems.map(sub => (
+                                        <button
+                                            key={sub.id}
+                                            onClick={() => setCurrentModule(sub.id)}
+                                            className={`w-full text-left px-3 py-1.5 rounded-md text-xs transition-all ${currentModule === sub.id ? 'text-primary font-bold bg-primary/5' : 'text-slate-500 hover:text-primary hover:bg-slate-50'}`}
+                                        >
+                                            {sub.label}
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
 
                         {/* Controles de Reordenamiento (Solo visibles en hover y si no está colapsado) */}
                         {!sidebarCollapsed && onMoveMenuItem && (
