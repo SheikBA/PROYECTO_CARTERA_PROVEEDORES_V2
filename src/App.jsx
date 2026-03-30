@@ -34,6 +34,7 @@ const App = () => {
   // Estado global de facturas (compartido entre Carga y Pagos)
   const [rawInvoices, setRawInvoices] = useState([]);
   const [authorizedInvoices, setAuthorizedInvoices] = useState([]);
+  const [finalizedInvoices, setFinalizedInvoices] = useState([]); // Nuevo: Fuente estática para Pagos Autorizados
   const [rejectedInvoices, setRejectedInvoices] = useState([]);
   const [availableInvoices, setAvailableInvoices] = useState([]);
   const [trackingData, setTrackingData] = useState([]);
@@ -123,9 +124,10 @@ const App = () => {
     const savedData = localStorage.getItem('cartera_app_cache');
     if (savedData) {
       try {
-        const { invoices, authorized, rejected, tracking, cats, batch } = JSON.parse(savedData);
+        const { invoices, authorized, finalized, rejected, tracking, cats, batch } = JSON.parse(savedData);
         if (invoices) setRawInvoices(invoices);
         if (authorized) setAuthorizedInvoices(authorized);
+        if (finalized) setFinalizedInvoices(finalized);
         if (rejected) setRejectedInvoices(rejected);
         if (tracking) setTrackingData(tracking);
         if (cats) setCatalogs(cats);
@@ -141,6 +143,7 @@ const App = () => {
     const dataToSave = {
       invoices: rawInvoices,
       authorized: authorizedInvoices,
+      finalized: finalizedInvoices,
       rejected: rejectedInvoices,
       tracking: trackingData,
       cats: catalogs,
@@ -192,14 +195,15 @@ const App = () => {
             catalogs={catalogs}
             activeBatch={activeBatch}
             setActiveBatch={setActiveBatch}
+            setFinalizedInvoices={setFinalizedInvoices} // Para pasar la "foto" del batch
             mode="proposal"
           />
         );
       case 'authorized-payments':
         return (
           <Payments
-            rawInvoices={authorizedInvoices}
-            setRawInvoices={setAuthorizedInvoices}
+            rawInvoices={finalizedInvoices}
+            setRawInvoices={setFinalizedInvoices}
             availableInvoices={availableInvoices}
             setAvailableInvoices={setAvailableInvoices}
             trackingData={trackingData}

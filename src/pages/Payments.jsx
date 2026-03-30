@@ -6,7 +6,7 @@ import Badge from '../components/Badge';
 import Modal from '../components/Modal';
 // Ya no importamos CATALOG_... fijos, los recibiremos por props
 
-const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorizedInvoices, setAuthorizedInvoices, setRejectedInvoices, availableInvoices, setAvailableInvoices, trackingData, setTrackingData, catalogs, activeBatch, setActiveBatch, mode = 'proposal' }) => {
+const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorizedInvoices, setAuthorizedInvoices, setFinalizedInvoices, setRejectedInvoices, availableInvoices, setAvailableInvoices, trackingData, setTrackingData, catalogs, activeBatch, setActiveBatch, mode = 'proposal' }) => {
     const isProposal = mode === 'proposal';
     const isAuthorized = mode === 'authorized';
     const isRejected = mode === 'rejected';
@@ -32,6 +32,10 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
 
     // Inputs Globales State
     const [globalAmountInput, setGlobalAmountInput] = useState('');
+
+    // Estado para la nueva funcionalidad de Grupos de Pagos Procesados
+    const [showGroupsView, setShowGroupsView] = useState(false);
+    const [hasJustFinished, setHasJustFinished] = useState(false);
 
     // Modals state
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -76,12 +80,17 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
 
     // 1. Calculate general KPIs
     const kpis = useMemo(() => {
+        const pendingArray = Array.isArray(rawInvoices) ? rawInvoices : [];
+        const authorizedArray = Array.isArray(authorizedInvoices) ? authorizedInvoices : [];
+
         // En gestión, el universo total es lo pendiente + lo autorizado
         const baseInvoices = isProposal
-            ? [...(Array.isArray(rawInvoices) ? rawInvoices : []), ...(Array.isArray(authorizedInvoices) ? authorizedInvoices : [])]
-            : (Array.isArray(rawInvoices) ? rawInvoices : []);
+            ? [...pendingArray, ...authorizedArray]
+            : pendingArray;
 
         const totalToPay = baseInvoices.reduce((sum, inv) => sum + inv.amount, 0);
+        const totalAuthorized = authorizedArray.reduce((sum, inv) => sum + inv.amount, 0);
+        const totalPending = pendingArray.reduce((sum, inv) => sum + inv.amount, 0);
         const totalPaid = trackingData.reduce((sum, item) => sum + item.amount, 0);
         const providers = new Set(baseInvoices.map(inv => inv.providerName));
         const groups = new Set(baseInvoices.map(inv => inv.group));
@@ -89,11 +98,13 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
 
         return {
             totalToPay,
+            totalAuthorized,
+            totalPending,
             totalPaid,
             providersCount: providers.size,
             groupsCount: groups.size,
             fiscalErrors,
-            pending: isProposal ? rawInvoices.length : baseInvoices.length,
+            pendingCount: pendingArray.length,
             processed: trackingData.length
         };
     }, [rawInvoices, authorizedInvoices, trackingData, isProposal]);
@@ -245,15 +256,21 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
 
     // Paginación de Bancos (Lógica faltante que causaba el error)
     const filteredBanks = useMemo(() => {
-        const list = (bankTree || []).filter(b =>
-            b.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            (b.account && b.account.includes(searchTerm)) ||
-            (b.description && b.description.toLowerCase().includes(searchTerm.toLowerCase()))
-        );
+        const list = (bankTree || []).filter(b => {
+            const matchesSearch = b.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                (b.account && b.account.includes(searchTerm)) ||
+                (b.description && b.description.toLowerCase().includes(searchTerm.toLowerCase()));
+
+            // REQUERIMIENTO: En modo Autorizados, solo mostrar bancos que tengan facturas (monto > 0)
+            if (isAuthorized) {
+                return matchesSearch && b.amount > 0;
+            }
+            return matchesSearch;
+        });
 
         // Ordenamos por nombre de banco para agrupar visualmente "por banco"
         return list.sort((a, b) => a.name.localeCompare(b.name));
-    }, [bankTree, searchTerm]);
+    }, [bankTree, searchTerm, isAuthorized, isRejected]);
 
     // Reset pagination when provider changes
     useEffect(() => {
@@ -306,6 +323,12 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
 
         if (confirmFinalize) {
             const batchId = `BCH-${new Date().getFullYear()}${(new Date().getMonth() + 1).toString().padStart(2, '0')}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+            // CREAR SNAPSHOT: Enviamos la información actual a la lista definitiva de Pagos Autorizados
+            if (setFinalizedInvoices) {
+                setFinalizedInvoices([...authorizedInvoices]);
+            }
+
             setActiveBatch({
                 id: batchId,
                 status: 'finalized',
@@ -490,34 +513,86 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
 
     // Confirm Global Payment - sends everything to tracking
     const handleGlobalConfirm = () => {
-        if (parseFloat(globalAmountInput) !== kpis.totalToPay) {
-            alert(`Error: El monto ingresado (${formatCurrency(globalAmountInput)}) no coincide con el total de la propuesta (${formatCurrency(kpis.totalToPay)}). Revisa los ajustes.`);
+        const inputAmount = parseFloat(globalAmountInput) || 0;
+        const totalExpected = kpis.totalToPay;
+
+        if (Math.abs(inputAmount - totalExpected) > 0.01) {
+            alert(`Error de Validación: El importe ingresado (${formatCurrency(inputAmount)}) debe ser IGUAL al Monto Total Autorizado (${formatCurrency(totalExpected)}) para proceder con la dispersión.`);
             return;
         }
 
         if (confirm(`¿Estás seguro de confirmar el pago masivo por ${formatCurrency(kpis.totalToPay)}?`)) {
 
-            // Transform rawInvoices to trackingData format and append
+            // REQUERIMIENTO: Transformar a estatus "PROCESANDO PAGO" y agregar log inicial para trazabilidad
             const newTracking = (rawInvoices || []).map(inv => ({
-                id: `TRK-${Math.floor(Math.random() * 10000)}`,
-                date: new Date().toISOString().split('T')[0],
-                providerName: inv.providerName,
-                amount: inv.amount,
-                currency: inv.currency,
-                status: 'Completed',
-                pdfUrl: null
+                ...inv,
+                trackingId: `TRK-${Math.floor(Math.random() * 10000 + 1000)}`,
+                processedDate: new Date().toISOString().split('T')[0],
+                status: 'PROCESANDO PAGO',
+                batchId: activeBatch?.id || 'MANUAL',
+                auditLog: [{
+                    event: 'DISPERSION_ERP',
+                    timestamp: new Date().toISOString(),
+                    details: 'Pago enviado a cola de procesamiento ERP'
+                }]
             }));
 
             setTrackingData(prev => [...prev, ...newTracking]);
-            setRawInvoices([]); // clear proposal
+
+            // Limpieza y cambio de estado visual
+            setRawInvoices([]);
+            setHasJustFinished(true);
+
             setSelectedBank(null);
             setSelectedCompany(null);
             setSelectedGroup(null);
             setSelectedProvider(null);
             setDrillLevel(0);
-            alert("¡Pagos procesados y enviados al ERP exitosamente!");
         }
     };
+
+    // Nueva acción: Rechazar grupo de pago completo desde la vista de procesamiento
+    const handleRejectProviderGroup = (providerName) => {
+        if (window.confirm(`¿Estás seguro de rechazar el grupo de pago para el proveedor: ${providerName}? Esta acción quedará registrada en el log.`)) {
+            setTrackingData(prev => prev.map(inv => {
+                if (inv.providerName === providerName && inv.status === 'PROCESANDO PAGO') {
+                    return {
+                        ...inv,
+                        status: 'RECHAZADO MANUAL',
+                        rejectedAt: new Date().toISOString(),
+                        auditLog: [
+                            ...(inv.auditLog || []),
+                            {
+                                event: 'RECHAZO_MANUAL_GRUPO',
+                                timestamp: new Date().toISOString(),
+                                details: 'El usuario rechazó el grupo de pago completo desde la vista de grupos.'
+                            }
+                        ]
+                    };
+                }
+                return inv;
+            }));
+        }
+    };
+
+    // Lógica para agrupar el tracking por proveedor para la nueva pantalla
+    const processedGroups = useMemo(() => {
+        const groups = {};
+        (trackingData || []).forEach(item => {
+            if (!groups[item.providerName]) {
+                groups[item.providerName] = {
+                    name: item.providerName,
+                    total: 0,
+                    count: 0,
+                    invoices: []
+                };
+            }
+            groups[item.providerName].total += item.amount;
+            groups[item.providerName].count += 1;
+            groups[item.providerName].invoices.push(item);
+        });
+        return Object.values(groups);
+    }, [trackingData]);
 
     return (
         <div className="p-6 h-full flex flex-col space-y-6 animate-fade-in-up">
@@ -600,51 +675,84 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
                 </div>
             )}
 
-            {/* Solo mostramos el Importe Global en el módulo de Pagos Autorizados */}
+            {/* Ajuste en el Card de Dispersión para mostrar nueva opción */}
             {isAuthorized && (
                 <Card className="bg-emerald-50 border-emerald-100">
-                    <div className="flex flex-col md:flex-row gap-6 items-end">
-                        <div className="flex-1 w-full">
-                            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 block font-mono">Importe Global Autorizado a Pagar</label>
-                            <div className="relative">
-                                <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-500" size={18} />
-                                <input
-                                    type="number"
-                                    value={globalAmountInput}
-                                    onChange={(e) => setGlobalAmountInput(parseFloat(e.target.value) || 0)}
-                                    className="w-full pl-10 pr-4 py-3 rounded-lg border-2 border-emerald-200 focus:border-emerald-500 outline-none font-bold text-lg transition-all bg-white"
-                                />
+                    {!hasJustFinished ? (
+                        <div className="flex flex-col md:flex-row gap-6 items-end">
+                            <div className="flex-1 w-full">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 block font-mono">Importe Global Autorizado a Pagar</label>
+                                <div className="relative">
+                                    <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-500" size={18} />
+                                    <input
+                                        type="text"
+                                        value={globalAmountInput}
+                                        onChange={(e) => {
+                                            const val = e.target.value.replace(/[^0-9.]/g, '');
+                                            if ((val.match(/\./g) || []).length <= 1) {
+                                                setGlobalAmountInput(val);
+                                            }
+                                        }}
+                                        placeholder="0.00"
+                                        className="w-full pl-10 pr-4 py-3 rounded-lg border-2 border-emerald-200 focus:border-emerald-500 outline-none font-bold text-lg bg-white"
+                                    />
+                                </div>
                             </div>
-                        </div>
-                        <div className="flex gap-2 w-full md:w-auto">
-                            <Button
-                                variant="success"
-                                icon={CheckCircle2}
-                                onClick={handleGlobalConfirm}
-                                disabled={rawInvoices.length === 0}
-                                className="w-full md:w-auto shadow-lg"
-                            >
+                            <Button variant="success" icon={CheckCircle2} onClick={handleGlobalConfirm} disabled={rawInvoices.length === 0}>
                                 Dispersar Pagos (ERP)
                             </Button>
                         </div>
-                    </div>
+                    ) : (
+                        <div className="flex flex-col sm:flex-row items-center justify-between p-2 gap-4">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2 bg-emerald-500 text-white rounded-full"><CheckCircle2 size={24} /></div>
+                                <div>
+                                    <h4 className="font-bold text-emerald-900">¡Dispersión Exitosa!</h4>
+                                    <p className="text-sm text-emerald-700">Las facturas han sido enviadas al ERP correctamente.</p>
+                                </div>
+                            </div>
+                            <Button variant="primary" icon={Layers} onClick={() => setShowGroupsView(true)}>
+                                VER GRUPOS DE PAGOS
+                            </Button>
+                        </div>
+                    )}
                 </Card>
             )}
 
             {/* KPIs Grid */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                <Card className="relative overflow-hidden group">
-                    <p className="text-xs font-bold text-slate-400 uppercase">
-                        {isProposal ? 'Monto Total Propuesta' : 'Monto Total Autorizado'}
+            <div className={`grid grid-cols-2 ${isProposal ? 'lg:grid-cols-3 xl:grid-cols-6' : 'lg:grid-cols-4'} gap-4`}>
+                {isProposal && (
+                    <>
+                        <Card className="relative overflow-hidden border-blue-100 bg-blue-50/20">
+                            <p className="text-[10px] font-bold text-blue-600 uppercase tracking-tight">Propuesta General (Base)</p>
+                            <h3 className="text-xl font-bold text-slate-700 mt-1">{formatCurrency(kpis.totalToPay)}</h3>
+                            <div className="absolute right-3 top-3 opacity-20"><DollarSign size={16} /></div>
+                        </Card>
+
+                        <Card className="relative overflow-hidden group border-emerald-100 bg-emerald-50/30">
+                            <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-tight">Monto Autorizado</p>
+                            <h3 className="text-xl font-bold text-emerald-700 mt-1">{formatCurrency(kpis.totalAuthorized)}</h3>
+                            <div className="absolute right-3 top-3 p-1.5 bg-emerald-100 text-emerald-600 rounded-lg"><CheckCircle2 size={16} /></div>
+                        </Card>
+                    </>
+                )}
+
+                <Card className={`relative overflow-hidden group ${isProposal ? 'border-primary/20 bg-primary/5 shadow-md ring-2 ring-primary/10' : ''}`}>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tight">
+                        {isProposal ? 'Monto Total Propuesta (Restante)' : 'Monto Total Autorizado'}
                     </p>
-                    <h3 className="text-2xl font-bold text-slate-800 mt-1">{formatCurrency(kpis.totalToPay)}</h3>
-                    <div className="absolute right-4 top-4 p-2 bg-blue-50 text-blue-600 rounded-lg"><DollarSign size={20} /></div>
+                    <h3 className="text-xl font-bold text-slate-800 mt-1">
+                        {formatCurrency(isProposal ? kpis.totalPending : kpis.totalToPay)}
+                    </h3>
+                    <div className="absolute right-3 top-3 p-1.5 bg-blue-50 text-blue-600 rounded-lg"><DollarSign size={16} /></div>
                 </Card>
+
                 <Card className="relative">
                     <p className="text-xs font-bold text-slate-400 uppercase">Histórico Procesados</p>
-                    <h3 className="text-2xl font-bold text-emerald-600 mt-1">{formatCurrency(kpis.totalPaid)}</h3>
-                    <div className="absolute right-4 top-4 p-2 bg-emerald-50 text-emerald-600 rounded-lg"><CheckCircle2 size={20} /></div>
+                    <h3 className="text-2xl font-bold text-slate-600 mt-1">{formatCurrency(kpis.totalPaid)}</h3>
+                    <div className="absolute right-4 top-4 p-2 bg-slate-50 text-slate-400 rounded-lg"><Clock size={20} /></div>
                 </Card>
+
                 <Card className="relative">
                     <p className="text-xs font-bold text-slate-400 uppercase">Total Proveedores</p>
                     <h3 className="text-2xl font-bold text-slate-800 mt-1">{kpis.providersCount}</h3>
@@ -656,6 +764,88 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
                     <div className="absolute right-4 top-4 p-2 bg-amber-50 text-amber-600 rounded-lg"><Layers size={20} /></div>
                 </Card>
             </div>
+
+            {/* NUEVA PANTALLA: LISTA DE GRUPOS DE PROVEEDOR */}
+            {showGroupsView && (
+                <Modal isOpen={true} onClose={() => setShowGroupsView(false)} title="LISTA DE GRUPOS DE PROVEEDOR" size="lg">
+                    <div className="space-y-4">
+                        <p className="text-sm text-slate-500 mb-4">Proveedores procesados en el lote actual con estatus de pago en ERP.</p>
+                        <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-2">
+                            {processedGroups.map((group, idx) => (
+                                <details key={idx} className="group border border-slate-200 rounded-xl bg-white overflow-hidden shadow-sm">
+                                    <summary className="flex items-center justify-between p-4 cursor-pointer hover:bg-slate-50 list-none">
+                                        <div className="flex items-center gap-4">
+                                            <div className="h-10 w-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 group-open:bg-primary group-open:text-white transition-colors">
+                                                <Users size={20} />
+                                            </div>
+                                            <div>
+                                                <h4 className="font-bold text-slate-800">{group.name}</h4>
+                                                <p className="text-xs text-slate-500">{group.count} facturas autorizadas</p>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center gap-6">
+                                            <div className="text-right">
+                                                <p className={`font-bold ${group.invoices.every(i => i.status === 'RECHAZADO MANUAL') ? 'text-red-400 line-through' : 'text-slate-900'}`}>
+                                                    {formatCurrency(group.total)}
+                                                </p>
+                                                <Badge
+                                                    status={group.invoices.every(i => i.status === 'RECHAZADO MANUAL') ? 'danger' : 'info'}
+                                                    className="text-[10px] py-0"
+                                                >
+                                                    {group.invoices.every(i => i.status === 'RECHAZADO MANUAL') ? 'RECHAZADO' : 'PROCESANDO PAGO'}
+                                                </Badge>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                {group.invoices.some(i => i.status === 'PROCESANDO PAGO') && (
+                                                    <button
+                                                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleRejectProviderGroup(group.name); }}
+                                                        className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-all"
+                                                        title="Rechazar grupo de pago"
+                                                    >
+                                                        <ShieldAlert size={18} />
+                                                    </button>
+                                                )}
+                                                <ChevronRight size={18} className="text-slate-300 group-open:rotate-90 transition-transform" />
+                                            </div>
+                                        </div>
+                                    </summary>
+                                    <div className="p-4 border-t border-slate-100 bg-slate-50/50">
+                                        <table className="w-full text-xs text-left">
+                                            <thead>
+                                                <tr className="text-slate-400 font-bold uppercase tracking-tighter border-b border-slate-200">
+                                                    <th className="pb-2">Factura</th>
+                                                    <th className="pb-2">ID Tracking</th>
+                                                    <th className="pb-2">Fecha Proc.</th>
+                                                    <th className="pb-2 text-right">Importe</th>
+                                                    <th className="pb-2 text-center">Estatus ERP</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-200">
+                                                {group.invoices.map((inv, i) => (
+                                                    <tr key={i} className="text-slate-700">
+                                                        <td className="py-2 font-medium">{inv.meta?.invoice}</td>
+                                                        <td className="py-2 font-mono text-slate-400">{inv.trackingId}</td>
+                                                        <td className="py-2">{inv.processedDate}</td>
+                                                        <td className="py-2 text-right font-bold">{formatCurrency(inv.amount)}</td>
+                                                        <td className="py-2 text-center">
+                                                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${inv.status === 'RECHAZADO MANUAL'
+                                                                    ? 'bg-red-100 text-red-700'
+                                                                    : 'bg-blue-100 text-blue-700 animate-pulse'
+                                                                }`}>
+                                                                {inv.status}
+                                                            </span>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </details>
+                            ))}
+                        </div>
+                    </div>
+                </Modal>
+            )}
 
             {/* Tree Section */}
             <div className="flex-1 bg-surface border border-slate-200 shadow-sm rounded-xl flex flex-col z-10 overflow-hidden min-h-[500px]">
@@ -1337,7 +1527,7 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
                 </div>
             </Modal>
 
-        </div>
+        </div >
     );
 };
 
