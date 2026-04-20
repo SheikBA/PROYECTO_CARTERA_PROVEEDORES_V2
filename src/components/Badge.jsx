@@ -1,5 +1,3 @@
-import React from 'react';
-
 const Badge = ({ status, children }) => {
     let classes = "inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold border ";
 
@@ -8,6 +6,7 @@ const Badge = ({ status, children }) => {
         case 'completed':
         case 'valid':
         case 'active':
+        case 'success':
             classes += "bg-emerald-50 text-emerald-600 border-emerald-100";
             break;
         case 'pending':
@@ -19,6 +18,9 @@ const Badge = ({ status, children }) => {
         case 'inactive':
         case 'danger':
             classes += "bg-red-50 text-danger border-red-100";
+            break;
+        case 'info':
+            classes += "bg-blue-50 text-blue-600 border-blue-100";
             break;
         default:
             classes += "bg-slate-50 text-slate-600 border-slate-200";

@@ -9,10 +9,39 @@ app = Flask(__name__)
 CORS(app)
 
 # --- CONFIGURACIÓN DE LA RUTA ACTUALIZADA ---
-BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(
-    __file__), "..", "..", "MODELO_DATOS_CARTERA_PROVEEDORES"))
-FILE_NAME = "FUENTE_DATOS..xlsx"
-EXCEL_PATH = os.path.join(BASE_DIR, FILE_NAME)
+# Nombres posibles del archivo (se han detectado variaciones como el doble punto o el sufijo '2')
+POSSIBLE_FILE_NAMES = ["FUENTE_DATOS..xlsx",
+                       "FUENTE_DATOS2.xlsx", "FUENTE_DATOS.xlsx"]
+
+# Carpetas base candidatas donde podría residir el modelo de datos
+POSSIBLE_BASE_DIRS = [
+    # Intento 1: Subir dos niveles (Carpeta Documents del usuario)
+    os.path.abspath(os.path.join(os.path.dirname(__file__),
+                    "..", "..", "MODELO_DATOS_CARTERA_PROVEEDORES")),
+    # Intento 2: Subir un nivel
+    os.path.abspath(os.path.join(os.path.dirname(__file__),
+                    "..", "MODELO_DATOS_CARTERA_PROVEEDORES")),
+    # Intento 3: Ruta absoluta directa
+    r"C:\Users\ebaeza.HOTEL_SHOPS\Documents\MODELO_DATOS_CARTERA_PROVEEDORES"
+]
+
+EXCEL_PATH = None
+FILE_NAME = POSSIBLE_FILE_NAMES[0]  # Valor por defecto para reportar error
+
+# Buscamos dinámicamente el archivo en las posibles ubicaciones y con los posibles nombres
+for base_dir in POSSIBLE_BASE_DIRS:
+    for name in POSSIBLE_FILE_NAMES:
+        target = os.path.join(base_dir, name)
+        if os.path.exists(target):
+            EXCEL_PATH = target
+            FILE_NAME = name
+            break
+    if EXCEL_PATH:
+        break
+
+# Si no se encontró nada, asignamos la ruta del primer intento para que el log de error sea descriptivo
+if not EXCEL_PATH:
+    EXCEL_PATH = os.path.join(POSSIBLE_BASE_DIRS[0], POSSIBLE_FILE_NAMES[0])
 # ------------------------------------------
 
 
@@ -20,13 +49,14 @@ EXCEL_PATH = os.path.join(BASE_DIR, FILE_NAME)
 def get_invoices():
     # Verificamos si el archivo existe antes de intentar leerlo
     if not os.path.exists(EXCEL_PATH):
-        print(f"ERROR: Archivo no encontrado en: {EXCEL_PATH}")
+        current_dir = os.path.dirname(EXCEL_PATH)
+        print(f"ERROR: Archivo '{FILE_NAME}' no encontrado en: {EXCEL_PATH}")
         # Diagnóstico de ayuda: listar archivos en la carpeta
-        if os.path.exists(BASE_DIR):
+        if os.path.exists(current_dir):
             print(
-                f"Archivos encontrados en la carpeta: {os.listdir(BASE_DIR)}")
+                f"Archivos encontrados en la carpeta '{current_dir}': {os.listdir(current_dir)}")
         else:
-            print(f"La carpeta base no existe: {BASE_DIR}")
+            print(f"La carpeta base no existe: {current_dir}")
         return jsonify({"error": f"El archivo no existe en la ruta: {EXCEL_PATH}"}), 404
 
     try:

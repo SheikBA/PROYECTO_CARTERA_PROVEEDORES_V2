@@ -29,3 +29,11 @@ export const INITIAL_TRACKING_DATA = [
     { id: 'TRK-001', date: '2025-08-15', providerName: 'Office Supplies Co.', amount: 1500.00, currency: 'MXN', status: 'Completed', pdfUrl: '/dummy.pdf' },
     { id: 'TRK-002', date: '2025-09-01', providerName: 'TechSolutions Inc.', amount: 35000.00, currency: 'MXN', status: 'RejectedH2H', pdfUrl: null }
 ];
+
+// Datos mock para el módulo de Configuración de Plantillas
+export const MOCK_TEMPLATES = [
+    { id: 'TPL-001', name: 'Factura Estándar v2',              type: 'PDF',  status: 'active',   lastModified: '10 Oct 2025' },
+    { id: 'TPL-002', name: 'Recibo Simplificado',              type: 'HTML', status: 'active',   lastModified: '12 Oct 2025' },
+    { id: 'TPL-003', name: 'Comprobante XML',                  type: 'XML',  status: 'draft',    lastModified: '14 Oct 2025' },
+    { id: 'TPL-004', name: 'Factura Proveedor Internacional',  type: 'PDF',  status: 'inactive', lastModified: '01 Sep 2025' },
+];

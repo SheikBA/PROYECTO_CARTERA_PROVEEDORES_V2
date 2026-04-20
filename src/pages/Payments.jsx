@@ -1,12 +1,12 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Search, Filter, Download, DollarSign, Clock, CheckCircle2, ChevronRight, ChevronLeft, ArrowLeft, RefreshCw, Building2, Layers, Users, X, Plus, Edit2, ArrowRightLeft, AlertTriangle, Briefcase, FileText, ShieldAlert, ArrowUpDown, ChevronUp, ChevronDown, Lock } from 'lucide-react';
+import { Search, Download, DollarSign, Clock, CheckCircle2, ChevronRight, ChevronLeft, ArrowLeft, RefreshCw, Building2, Layers, Users, X, Plus, ArrowRightLeft, Briefcase, FileText, ShieldAlert, ChevronUp, ChevronDown, Lock, Landmark } from 'lucide-react';
 import Button from '../components/Button';
 import Card from '../components/Card';
 import Badge from '../components/Badge';
 import Modal from '../components/Modal';
 // Ya no importamos CATALOG_... fijos, los recibiremos por props
 
-const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorizedInvoices, setAuthorizedInvoices, setFinalizedInvoices, setRejectedInvoices, availableInvoices, setAvailableInvoices, trackingData, setTrackingData, catalogs, activeBatch, setActiveBatch, mode = 'proposal' }) => {
+const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorizedInvoices, setAuthorizedInvoices, setFinalizedInvoices, setRejectedInvoices, availableInvoices, setAvailableInvoices, trackingData, setTrackingData, catalogs, activeBatch, setActiveBatch, currentUser, mode = 'proposal', subMode = '' }) => {
     const isProposal = mode === 'proposal';
     const isAuthorized = mode === 'authorized';
     const isRejected = mode === 'rejected';
@@ -36,6 +36,7 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
     // Estado para la nueva funcionalidad de Grupos de Pagos Procesados
     const [showGroupsView, setShowGroupsView] = useState(false);
     const [hasJustFinished, setHasJustFinished] = useState(false);
+    const [groupSearchTerm, setGroupSearchTerm] = useState(''); // New state for modal search
 
     // Modals state
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -46,8 +47,7 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
     const [searchUuid, setSearchUuid] = useState('');
     const [searchResult, setSearchResult] = useState(null);
 
-    // Estados para Ordenamiento y Secciones Colapsables
-    const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
+    // Estados para Secciones Colapsables (Nivel 4)
     const [isFiscalExpanded, setIsFiscalExpanded] = useState(true);
     const [isNonFiscalExpanded, setIsNonFiscalExpanded] = useState(true);
 
@@ -58,7 +58,6 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
 
     // Helper formatting functions
     const formatCurrency = (amount) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(amount || 0);
-    const formatDate = (dateString) => new Date(dateString).toLocaleDateString('es-MX', { year: 'numeric', month: 'short', day: 'numeric' });
 
     // --------------------------------------------------------------------------------
     // CORE LOGIC: Derived State from rawInvoices
@@ -80,34 +79,65 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
 
     // 1. Calculate general KPIs
     const kpis = useMemo(() => {
-        const pendingArray = Array.isArray(rawInvoices) ? rawInvoices : [];
-        const authorizedArray = Array.isArray(authorizedInvoices) ? authorizedInvoices : [];
+        const pendingArr = Array.isArray(rawInvoices) ? rawInvoices : [];
+        const authArr = Array.isArray(authorizedInvoices) ? authorizedInvoices : [];
+        const allInvoices = [...pendingArr, ...authArr];
 
-        // En gestión, el universo total es lo pendiente + lo autorizado
-        const baseInvoices = isProposal
-            ? [...pendingArray, ...authorizedArray]
-            : pendingArray;
+        const companyTotals = {};
+        const bankCompanyTotals = {};
 
-        const totalToPay = baseInvoices.reduce((sum, inv) => sum + inv.amount, 0);
-        const totalAuthorized = authorizedArray.reduce((sum, inv) => sum + inv.amount, 0);
-        const totalPending = pendingArray.reduce((sum, inv) => sum + inv.amount, 0);
-        const totalPaid = trackingData.reduce((sum, item) => sum + item.amount, 0);
-        const providers = new Set(baseInvoices.map(inv => inv.providerName));
-        const groups = new Set(baseInvoices.map(inv => inv.group));
-        const fiscalErrors = baseInvoices.filter(inv => inv.meta?.hasFiscalError).length;
+        allInvoices.forEach(inv => {
+            const co = inv.meta?.company || inv.company || 'Sin Empresa';
+            const bkId = inv.bankId || 'Sin Banco';
+            const cur = inv.currency || 'MXN';
+            const amt = inv.amount || 0;
+
+            const bMeta = CATALOG_BANCOS.find(b => String(b.id) === String(bkId));
+            const bkName = bMeta ? bMeta.bank : bkId;
+
+            // Agrupación por Compañía
+            if (!companyTotals[co]) companyTotals[co] = { MXN: 0, USD: 0 };
+            companyTotals[co][cur] = (companyTotals[co][cur] || 0) + amt;
+
+            // Agrupación por Banco + Compañía
+            if (!bankCompanyTotals[bkName]) bankCompanyTotals[bkName] = { MXN: 0, USD: 0, companies: {} };
+            bankCompanyTotals[bkName][cur] += amt;
+
+            if (!bankCompanyTotals[bkName].companies[co]) bankCompanyTotals[bkName].companies[co] = { MXN: 0, USD: 0 };
+            bankCompanyTotals[bkName].companies[co][cur] += amt;
+        });
+
+        const getTotals = (arr) => ({
+            MXN: arr.filter(i => i.currency === 'MXN').reduce((s, i) => s + i.amount, 0),
+            USD: arr.filter(i => i.currency === 'USD').reduce((s, i) => s + i.amount, 0)
+        });
+
+        // H2H Logic
+        const h2hPending = pendingArr.filter(inv => inv.meta?.isH2H || inv.member_id === 1 || inv.member_id === '1');
+        const h2hAuth = authArr.filter(inv => inv.meta?.isH2H || inv.member_id === 1 || inv.member_id === '1');
+
+        // Non-H2H Logic
+        const nonH2hPending = pendingArr.filter(inv => !(inv.meta?.isH2H || inv.member_id === 1 || inv.member_id === '1'));
+        const nonH2hAuth = authArr.filter(inv => !(inv.meta?.isH2H || inv.member_id === 1 || inv.member_id === '1'));
+
+        const fiscalErrors = allInvoices.filter(inv => inv.meta?.hasFiscalError).length;
 
         return {
-            totalToPay,
-            totalAuthorized,
-            totalPending,
-            totalPaid,
-            providersCount: providers.size,
-            groupsCount: groups.size,
+            companyTotals,
+            bankCompanyTotals,
+            h2h: {
+                pending: getTotals(h2hPending),
+                applied: getTotals(h2hAuth)
+            },
+            nonH2h: {
+                pending: getTotals(nonH2hPending),
+                applied: getTotals(nonH2hAuth)
+            },
+            totalToPay: allInvoices.reduce((s, i) => s + i.amount, 0),
+            companiesCount: Object.keys(companyTotals).length,
             fiscalErrors,
-            pendingCount: pendingArray.length,
-            processed: trackingData.length
         };
-    }, [rawInvoices, authorizedInvoices, trackingData, isProposal]);
+    }, [rawInvoices, authorizedInvoices, trackingData, isProposal, CATALOG_BANCOS]);
 
     // 2. Group Invoices by Bank -> Company -> Group -> Provider -> Invoices
     const bankTree = useMemo(() => {
@@ -254,23 +284,64 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
         return result;
     }, [displayInvoices, CATALOG_BANCOS, CATALOG_COMPANIAS, CATALOG_GRUPOS]);
 
+    // Helper function for recursive filtering of the bankTree
+    // Los montos se recalculan correctamente en base a los nodos/facturas que sobreviven el filtro
+    const filterTreeRecursively = (nodes, term) => {
+        if (!term) return nodes;
+        const lowerTerm = term.toLowerCase();
+
+        return nodes.map(node => {
+            const nodeMatches =
+                String(node.name || '').toLowerCase().includes(lowerTerm) ||
+                String(node.account || '').toLowerCase().includes(lowerTerm) ||
+                String(node.description || '').toLowerCase().includes(lowerTerm) ||
+                String(node.country || '').toLowerCase().includes(lowerTerm);
+
+            // Filtrar facturas directas del nodo
+            const matchedInvoices = (node.invoices || []).filter(inv =>
+                String(inv.meta?.invoice || '').toLowerCase().includes(lowerTerm) ||
+                String(inv.uuid || '').toLowerCase().includes(lowerTerm) ||
+                String(inv.providerName || '').toLowerCase().includes(lowerTerm) ||
+                (lowerTerm.includes('h2h') && inv.meta?.isH2H) ||
+                (lowerTerm.includes('kissflow') && inv.meta?.isKissflow)
+            );
+
+            // Filtrar hijos recursivamente
+            const filteredChildren = filterTreeRecursively(node.items || [], term);
+
+            if (!nodeMatches && matchedInvoices.length === 0 && filteredChildren.length === 0) return null;
+
+            // Recalcular monto: suma de facturas filtradas + suma de hijos filtrados
+            const invoicesAmount = matchedInvoices.reduce((s, inv) => s + (inv.amount || 0), 0);
+            const childrenAmount = filteredChildren.reduce((s, c) => s + (c.amount || 0), 0);
+
+            return {
+                ...node,
+                invoices: matchedInvoices,
+                items: filteredChildren,
+                amount: invoicesAmount + childrenAmount,
+            };
+        }).filter(Boolean);
+    };
+
+    // Global filtered bank tree based on searchTerm
+    const filteredGlobalBankTree = useMemo(() => {
+        return filterTreeRecursively(bankTree, searchTerm);
+    }, [bankTree, searchTerm]);
+
     // Paginación de Bancos (Lógica faltante que causaba el error)
     const filteredBanks = useMemo(() => {
-        const list = (bankTree || []).filter(b => {
-            const matchesSearch = b.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                (b.account && b.account.includes(searchTerm)) ||
-                (b.description && b.description.toLowerCase().includes(searchTerm.toLowerCase()));
-
+        const list = (filteredGlobalBankTree || []).filter(b => { // Use filteredGlobalBankTree here
             // REQUERIMIENTO: En modo Autorizados, solo mostrar bancos que tengan facturas (monto > 0)
             if (isAuthorized) {
-                return matchesSearch && b.amount > 0;
+                return b.amount > 0;
             }
-            return matchesSearch;
+            return true;
         });
 
         // Ordenamos por nombre de banco para agrupar visualmente "por banco"
-        return list.sort((a, b) => a.name.localeCompare(b.name));
-    }, [bankTree, searchTerm, isAuthorized, isRejected]);
+        return list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    }, [filteredGlobalBankTree, isAuthorized, isRejected]);
 
     // Reset pagination when provider changes
     useEffect(() => {
@@ -278,9 +349,6 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
         setInvoiceSearch('');
     }, [selectedProvider]);
 
-    useEffect(() => {
-        // Este hook está vacío a propósito, solo para registrar cambios en el término de búsqueda si fuera necesario en el futuro.
-    }, [searchTerm]);
 
     // Reassign Bank Handler
     const openReassignModal = (bank) => {
@@ -458,9 +526,8 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
 
         provider.invoices.forEach(inv => {
             const hasUuid = inv.uuid && String(inv.uuid).trim().length > 5;
-            const isTarCode = inv.meta?.tar_code === 1 || inv.meta?.tar_code === '1';
 
-            // REGLA FISCAL ACTUALIZADA:
+            // REGLA FISCAL: tiene UUID = Fiscal, sin UUID = No Fiscal
             if (hasUuid) {
                 // Si tiene UUID es Fiscal (aunque tenga error de tar_code)
                 fiscal.push(inv);
@@ -493,24 +560,6 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
         }
     };
 
-    // Remove invoice from proposal (Exclude)
-    const handleExclude = (invoiceId) => {
-        setRawInvoices(prev => prev.filter(inv => inv.id !== invoiceId));
-    };
-
-    // Regenerate from initial database state (Simulated)
-    const handleRegenerate = () => {
-        if (confirm('¿Deseas limpiar la propuesta actual y sincronizar de nuevo los datos?')) {
-            setRawInvoices([]);
-            setGlobalAmountInput(0);
-            setDrillLevel(0);
-            setSelectedBank(null);
-            setSelectedCompany(null);
-            setSelectedGroup(null);
-            setSelectedProvider(null);
-        }
-    };
-
     // Confirm Global Payment - sends everything to tracking
     const handleGlobalConfirm = () => {
         const inputAmount = parseFloat(globalAmountInput) || 0;
@@ -533,7 +582,8 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
                 auditLog: [{
                     event: 'DISPERSION_ERP',
                     timestamp: new Date().toISOString(),
-                    details: 'Pago enviado a cola de procesamiento ERP'
+                    user: currentUser?.name || 'Sistema',
+                    details: `Pago enviado a cola de procesamiento ERP por ${currentUser?.name || 'usuario desconocido'}`
                 }]
             }));
 
@@ -548,14 +598,137 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
             setSelectedGroup(null);
             setSelectedProvider(null);
             setDrillLevel(0);
+            if (setActiveBatch) setActiveBatch(null);
         }
     };
+
+    // Nueva acción: Devolver factura rechazada a la gestión de pagos (Reprocesar)
+    const handleRestoreProviderGroup = (providerName) => {
+        if (window.confirm(`¿Deseas devolver al proveedor "${providerName}" a la gestión de pagos? Las facturas volverán a estar pendientes de autorización.`)) {
+            // 1. Identificamos las facturas de este proveedor en la lista de rechazados
+            const toRestore = rawInvoices.filter(inv => inv.providerName === providerName);
+
+            // 2. Quitamos del bucket de rechazados
+            if (setRejectedInvoices) {
+                setRejectedInvoices(prev => prev.filter(inv => inv.providerName !== providerName));
+            }
+
+            // 3. Devolvemos a la propuesta original (Gestión) marcándolas como pendientes
+            if (setProposalInvoices) {
+                setProposalInvoices(prev => [
+                    ...prev,
+                    ...toRestore.map(inv => ({
+                        ...inv,
+                        status: 'pending',
+                        _status: 'pending'
+                    }))
+                ]);
+            }
+        }
+    };
+
+    // --- FUNCIÓN HELPER PARA RENDERIZAR EL ACORDEÓN DE PROVEEDOR (EXTRAÍDA DEL RENDER) ---
+    const renderProviderAccordion = (group, idx) => (
+        <details key={idx} className="group border border-slate-200 rounded-xl bg-white overflow-hidden shadow-sm">
+            <summary className="flex items-center justify-between p-4 cursor-pointer hover:bg-slate-50 list-none">
+                <div className="flex items-center gap-4">
+                    <div className={`h-10 w-10 rounded-full flex items-center justify-center transition-colors ${group.isH2H ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                        <Users size={20} />
+                    </div>
+                    <div>
+                        <h4 className="font-bold text-slate-800 flex items-center gap-2">
+                            {group.name}
+                            {group.isH2H && (
+                                <span className="bg-indigo-600 text-white text-[9px] px-2 py-0.5 rounded-sm font-black shadow-sm ring-1 ring-indigo-700/50 uppercase tracking-tighter">
+                                    H2H
+                                </span>
+                            )}
+                        </h4>
+                        <p className="text-xs text-slate-500">{group.count} facturas procesadas</p>
+                    </div>
+                </div>
+                <div className="flex items-center gap-6">
+                    <div className="text-right">
+                        <p className={`font-bold ${group.invoices.every(i => i.status === 'RECHAZADO MANUAL') ? 'text-red-400 line-through' : 'text-slate-900'}`}>
+                            {formatCurrency(group.total)}
+                        </p>
+                        <Badge
+                            status={group.invoices.every(i => i.status === 'RECHAZADO MANUAL') ? 'danger' : 'info'}
+                            className="text-[10px] py-0"
+                        >
+                            {group.invoices.every(i => i.status === 'RECHAZADO MANUAL') ? 'RECHAZADO' : 'PROCESANDO PAGO'}
+                        </Badge>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        {/* Botón de Rechazo (Solo en modo procesamiento) */}
+                        {!isRejected && group.invoices.some(i => i.status === 'PROCESANDO PAGO') && (
+                            <button
+                                onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleRejectProviderGroup(group.name); }}
+                                className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-all"
+                                title="Rechazar grupo de pago"
+                            >
+                                <ShieldAlert size={18} />
+                            </button>
+                        )}
+                        {/* Botón de Restaurar (Solo en modo Historial de Rechazos) */}
+                        {isRejected && (
+                            <button
+                                onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleRestoreProviderGroup(group.name); }}
+                                className="p-2 text-blue-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-all"
+                                title="Devolver a Gestión de Pagos"
+                            >
+                                <RefreshCw size={18} />
+                            </button>
+                        )}
+                        <ChevronRight size={18} className="text-slate-300 group-open:rotate-90 transition-transform" />
+                    </div>
+                </div>
+            </summary>
+            <div className="p-4 border-t border-slate-100 bg-slate-50/50 overflow-x-auto">
+                <table className="w-full text-xs text-left min-w-[500px]">
+                    <thead>
+                        <tr className="text-slate-400 font-bold uppercase tracking-tighter border-b border-slate-200">
+                            <th className="pb-2">Factura</th>
+                            <th className="pb-2">ID Tracking</th>
+                            <th className="pb-2">Fecha Proc.</th>
+                            <th className="pb-2 text-right">Importe</th>
+                            <th className="pb-2 text-center">Estatus ERP</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                        {group.invoices.map((inv, i) => (
+                            <tr key={i} className="text-slate-700">
+                                <td className="py-2 font-medium">
+                                    <div className="flex items-center gap-2">
+                                        {inv.meta?.invoice}
+                                        {inv.meta?.isKissflow && (
+                                            <span className="bg-purple-600 text-white text-[8px] px-1.5 py-0.5 rounded-sm font-black shadow-sm ring-1 ring-purple-700/50 uppercase tracking-tighter">
+                                                KISSFLOW
+                                            </span>
+                                        )}
+                                    </div>
+                                </td>
+                                <td className="py-2 font-mono text-slate-400">{inv.trackingId}</td>
+                                <td className="py-2">{inv.processedDate}</td>
+                                <td className="py-2 text-right font-bold">{formatCurrency(inv.amount)}</td>
+                                <td className="py-2 text-center">
+                                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${inv.status === 'RECHAZADO MANUAL' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700 animate-pulse'}`}>
+                                        {inv.status}
+                                    </span>
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        </details>
+    );
 
     // Nueva acción: Rechazar grupo de pago completo desde la vista de procesamiento
     const handleRejectProviderGroup = (providerName) => {
         if (window.confirm(`¿Estás seguro de rechazar el grupo de pago para el proveedor: ${providerName}? Esta acción quedará registrada en el log.`)) {
             setTrackingData(prev => prev.map(inv => {
-                if (inv.providerName === providerName && inv.status === 'PROCESANDO PAGO') {
+                if (inv.providerName === providerName && (inv.status === 'PROCESANDO PAGO' || inv.status === 'pending')) {
                     return {
                         ...inv,
                         status: 'RECHAZADO MANUAL',
@@ -565,6 +738,7 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
                             {
                                 event: 'RECHAZO_MANUAL_GRUPO',
                                 timestamp: new Date().toISOString(),
+                                user: currentUser?.name || 'Sistema',
                                 details: 'El usuario rechazó el grupo de pago completo desde la vista de grupos.'
                             }
                         ]
@@ -575,33 +749,367 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
         }
     };
 
-    // Lógica para agrupar el tracking por proveedor para la nueva pantalla
+    // Lógica para agrupar el tracking filtrando solo lo del BATCH ACTUAL
     const processedGroups = useMemo(() => {
-        const groups = {};
-        (trackingData || []).forEach(item => {
-            if (!groups[item.providerName]) {
-                groups[item.providerName] = {
+        const providerMap = {};
+        const lowerSearch = groupSearchTerm.toLowerCase();
+        const mainLowerSearch = searchTerm.toLowerCase();
+
+        // En modo REJECTED usamos rawInvoices (que vienen de App.jsx), de lo contrario trackingData
+        const sourceData = isRejected ? rawInvoices : trackingData;
+
+        // Filtramos de forma más inclusiva para evitar que la pantalla se quede en blanco
+        const currentItems = (sourceData || []).filter(item => {
+            if (isRejected) {
+                // Filtrado por subMode (H2H o General) en el módulo de rechazados
+                const isH2H = item.meta?.isH2H || item.member_id === 1 || item.member_id === '1';
+                const matchesSubMode = subMode === 'h2h' ? isH2H : !isH2H;
+                if (!matchesSubMode) return false;
+            } else {
+                const isCurrentBatch = activeBatch?.id && item.batchId === activeBatch.id;
+                const isJustFinished = hasJustFinished && (item.status === 'PROCESANDO PAGO' || item.status === 'RECHAZADO MANUAL');
+                if (!(isCurrentBatch || isJustFinished)) return false;
+            }
+
+            // Aplicamos búsqueda (usamos searchTerm si es el módulo principal de rechazados)
+            const term = isRejected ? mainLowerSearch : lowerSearch;
+            if (!term) return true;
+
+            // Búsqueda por proveedor, factura o tracking ID
+            return (
+                String(item.providerName || '').toLowerCase().includes(term) ||
+                String(item.meta?.invoice || '').toLowerCase().includes(term) ||
+                String(item.trackingId || '').toLowerCase().includes(term)
+            );
+        });
+
+        currentItems.forEach(item => {
+            if (!providerMap[item.providerName]) {
+                providerMap[item.providerName] = {
                     name: item.providerName,
                     total: 0,
                     count: 0,
-                    invoices: []
+                    invoices: [],
+                    isH2H: false
                 };
             }
-            groups[item.providerName].total += item.amount;
-            groups[item.providerName].count += 1;
-            groups[item.providerName].invoices.push(item);
+            providerMap[item.providerName].total += item.amount;
+            providerMap[item.providerName].count += 1;
+            providerMap[item.providerName].invoices.push(item);
+
+            // Aseguramos detección de H2H
+            if (item.meta?.isH2H || item.member_id === 1 || item.member_id === '1') {
+                providerMap[item.providerName].isH2H = true;
+            }
         });
-        return Object.values(groups);
-    }, [trackingData]);
+
+        const allGroups = Object.values(providerMap);
+        return {
+            h2h: allGroups.filter(g => g.isH2H),
+            general: allGroups.filter(g => !g.isH2H)
+        };
+    }, [rawInvoices, trackingData, activeBatch, hasJustFinished, groupSearchTerm, searchTerm, isRejected, subMode]);
+
+    // ─── PAGOS: Layout limpio para el módulo de facturas autorizadas ───
+    if (isAuthorized) {
+        const totalMXN = (rawInvoices || []).filter(i => i.currency !== 'USD').reduce((s, i) => s + (i.amount || 0), 0);
+        const totalUSD = (rawInvoices || []).filter(i => i.currency === 'USD').reduce((s, i) => s + (i.amount || 0), 0);
+        const uniqueCompanies = new Set((rawInvoices || []).map(i => i.meta?.company || i.company).filter(Boolean));
+        const uniqueBanks = new Set((rawInvoices || []).map(i => i.bankId).filter(Boolean));
+
+        const filteredAuthorized = (rawInvoices || []).filter(inv => {
+            if (!invoiceSearch) return true;
+            const term = invoiceSearch.toLowerCase();
+            return String(inv.providerName || '').toLowerCase().includes(term)
+                || String(inv.meta?.invoice || '').toLowerCase().includes(term)
+                || String(inv.uuid || '').toLowerCase().includes(term);
+        });
+
+        const totalAuthPages = Math.ceil(filteredAuthorized.length / ITEMS_PER_PAGE);
+        const paginatedAuthorized = filteredAuthorized.slice(
+            (invoicePage - 1) * ITEMS_PER_PAGE,
+            invoicePage * ITEMS_PER_PAGE
+        );
+
+        const getBankName = (bankId) => {
+            const b = CATALOG_BANCOS.find(b => String(b.id) === String(bankId));
+            return b ? b.bank : bankId;
+        };
+
+        return (
+            <div className="p-6 h-full flex flex-col gap-4 animate-fade-in-up overflow-y-auto">
+
+                {/* HEADER */}
+                <div className="shrink-0">
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <h1 className="text-2xl font-bold text-slate-800 tracking-tight">PAGOS</h1>
+                            <p className="text-xs text-slate-400 mt-0.5">Etapa 2: Control de dispersión a ERP</p>
+                        </div>
+                        <Button variant="secondary" icon={Download} size="sm">Exportar</Button>
+                    </div>
+
+                    {/* SUB-HEADER: ID de lote / multi-batch */}
+                    {activeBatch && (
+                        <div className="mt-3 flex flex-wrap items-center gap-3 p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                            <div className="flex items-center gap-2">
+                                <Layers size={16} className="text-blue-500" />
+                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Lote</span>
+                                <span className="font-mono font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded text-sm border border-blue-100">
+                                    {activeBatch.id}
+                                </span>
+                            </div>
+                            <div className="h-4 w-px bg-slate-200" />
+                            <span className="text-xs text-slate-500">{(rawInvoices || []).length} facturas autorizadas</span>
+                            <div className="h-4 w-px bg-slate-200" />
+                            <span className="text-xs text-slate-500">
+                                Creado: {activeBatch.createdAt ? new Date(activeBatch.createdAt).toLocaleDateString('es-MX') : '—'}
+                            </span>
+                            <div className="ml-auto">
+                                <Badge status="success">LOTE ACTIVO</Badge>
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                {/* KPIs Grid - Rediseño Aplicado a Pantalla PAGOS */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 shrink-0">
+                    {/* CARD 1: TOTAL POR COMPAÑIA */}
+                    <Card className="h-64 flex flex-col p-0 overflow-hidden border-t-4 border-t-indigo-500 shadow-sm">
+                        <div className="p-3 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
+                            <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Total por Compañía</span>
+                            <Building2 size={14} className="text-indigo-500" />
+                        </div>
+                        <div className="flex-1 overflow-y-auto">
+                            <table className="w-full text-[10px] text-left">
+                                <thead className="sticky top-0 bg-white border-b border-slate-100 shadow-sm">
+                                    <tr className="text-slate-400 font-bold">
+                                        <th className="p-2">Compañía</th>
+                                        <th className="p-2 text-right">MXN</th>
+                                        <th className="p-2 text-right">USD</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-50">
+                                    {Object.entries(kpis.companyTotals).map(([name, totals]) => (
+                                        <tr key={name} className="hover:bg-slate-50/50">
+                                            <td className="p-2 font-bold text-slate-700 truncate max-w-[80px]" title={name}>{name}</td>
+                                            <td className="p-2 text-right font-mono text-slate-600">{formatCurrency(totals.MXN).replace('$', '')}</td>
+                                            <td className="p-2 text-right font-mono text-blue-600">{totals.USD > 0 ? formatCurrency(totals.USD).replace('$', '') : '—'}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </Card>
+
+                    {/* CARD 2: TOTAL POR BANCO Y COMPAÑIA */}
+                    <Card className="h-64 flex flex-col p-0 overflow-hidden border-t-4 border-t-amber-500 shadow-sm">
+                        <div className="p-3 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
+                            <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Total Banco / Co.</span>
+                            <Landmark size={14} className="text-amber-500" />
+                        </div>
+                        <div className="flex-1 overflow-y-auto">
+                            <table className="w-full text-[9px] text-left">
+                                <thead className="sticky top-0 bg-white border-b border-slate-100 shadow-sm">
+                                    <tr className="text-slate-400 font-bold">
+                                        <th className="p-2">Banco / Co.</th>
+                                        <th className="p-2 text-right">MXN</th>
+                                        <th className="p-2 text-right">USD</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-50">
+                                    {Object.entries(kpis.bankCompanyTotals).map(([bkName, data]) => (
+                                        <React.Fragment key={bkName}>
+                                            <tr className="bg-slate-50/80 font-black text-slate-800">
+                                                <td className="p-2 uppercase">{bkName}</td>
+                                                <td className="p-2 text-right">{formatCurrency(data.MXN).replace('$', '')}</td>
+                                                <td className="p-2 text-right">{data.USD > 0 ? formatCurrency(data.USD).replace('$', '') : '—'}</td>
+                                            </tr>
+                                            {Object.entries(data.companies).map(([coName, coTotals]) => (
+                                                <tr key={coName} className="text-slate-500 italic">
+                                                    <td className="p-1 pl-4 truncate max-w-[80px]">{coName}</td>
+                                                    <td className="p-1 text-right">{formatCurrency(coTotals.MXN).replace('$', '')}</td>
+                                                    <td className="p-1 text-right">{coTotals.USD > 0 ? formatCurrency(coTotals.USD).replace('$', '') : '—'}</td>
+                                                </tr>
+                                            ))}
+                                        </React.Fragment>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </Card>
+
+                    {/* CARD 3: TOTAL HSH (H2H) */}
+                    <Card className="h-64 flex flex-col justify-between border-t-4 border-t-blue-500 shadow-sm">
+                        <div className="p-3">
+                            <div className="flex items-center justify-between mb-4">
+                                <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Total HSH (H2H)</span>
+                                <Users size={14} className="text-blue-500" />
+                            </div>
+                            <div className="space-y-3">
+                                <div className="p-2 bg-slate-50 rounded-lg border border-slate-100">
+                                    <p className="text-[8px] font-black text-slate-400 uppercase mb-1">Total por Pagar H2H</p>
+                                    <div className="flex justify-between font-mono text-[10px]"><span className="text-slate-500">MXN</span><span className="font-bold">{formatCurrency(kpis.h2h.pending.MXN)}</span></div>
+                                    <div className="flex justify-between font-mono text-[10px]"><span className="text-blue-500">USD</span><span className="font-bold text-blue-600">{formatCurrency(kpis.h2h.pending.USD).replace('$', 'US$ ')}</span></div>
+                                </div>
+                                <div className="p-2 bg-emerald-50 rounded-lg border border-emerald-100">
+                                    <p className="text-[8px] font-black text-emerald-600 uppercase mb-1">Total Aplicado H2H</p>
+                                    <div className="flex justify-between font-mono text-[10px]"><span className="text-emerald-500">MXN</span><span className="font-bold text-emerald-700">{formatCurrency(kpis.h2h.applied.MXN)}</span></div>
+                                    <div className="flex justify-between font-mono text-[10px]"><span className="text-emerald-500">USD</span><span className="font-bold text-emerald-700">{formatCurrency(kpis.h2h.applied.USD).replace('$', 'US$ ')}</span></div>
+                                </div>
+                            </div>
+                        </div>
+                    </Card>
+
+                    {/* CARD 4: TOTAL SIN HSH */}
+                    <Card className="h-64 flex flex-col justify-between border-t-4 border-t-slate-400 shadow-sm">
+                        <div className="p-3">
+                            <div className="flex items-center justify-between mb-4">
+                                <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Total Sin HSH</span>
+                                <DollarSign size={14} className="text-slate-400" />
+                            </div>
+                            <div className="space-y-3">
+                                <div className="p-2 bg-slate-50 rounded-lg border border-slate-100">
+                                    <p className="text-[8px] font-black text-slate-400 uppercase mb-1">Total por Pagar Sin H2H</p>
+                                    <div className="flex justify-between font-mono text-[10px]"><span className="text-slate-500">MXN</span><span className="font-bold">{formatCurrency(kpis.nonH2h.pending.MXN)}</span></div>
+                                    <div className="flex justify-between font-mono text-[10px]"><span className="text-blue-500">USD</span><span className="font-bold text-blue-600">{formatCurrency(kpis.nonH2h.pending.USD).replace('$', 'US$ ')}</span></div>
+                                </div>
+                                <div className="p-2 bg-emerald-50 rounded-lg border border-emerald-100">
+                                    <p className="text-[8px] font-black text-emerald-600 uppercase mb-1">Total Aplicado Sin H2H</p>
+                                    <div className="flex justify-between font-mono text-[10px]"><span className="text-emerald-500">MXN</span><span className="font-bold text-emerald-700">{formatCurrency(kpis.nonH2h.applied.MXN)}</span></div>
+                                    <div className="flex justify-between font-mono text-[10px]"><span className="text-emerald-500">USD</span><span className="font-bold text-emerald-700">{formatCurrency(kpis.nonH2h.applied.USD).replace('$', 'US$ ')}</span></div>
+                                </div>
+                            </div>
+                        </div>
+                    </Card>
+                </div>
+
+                {/* TABLA DE FACTURAS AUTORIZADAS */}
+                <div className="flex-1 bg-white border border-slate-200 rounded-xl flex flex-col shadow-sm overflow-hidden min-h-[300px]">
+                    <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shrink-0">
+                        <div>
+                            <h2 className="font-bold text-slate-700">Facturas Autorizadas</h2>
+                            <p className="text-xs text-slate-400">{filteredAuthorized.length} registros</p>
+                        </div>
+                        <div className="relative w-full sm:w-72">
+                            <Search size={14} className="absolute left-3 top-2.5 text-slate-400" />
+                            <input
+                                type="text"
+                                placeholder="Buscar proveedor, factura o UUID..."
+                                className="w-full pl-9 pr-3 py-2 text-xs border border-slate-200 rounded-lg bg-slate-50 focus:bg-white outline-none focus:ring-2 focus:ring-primary/20"
+                                value={invoiceSearch}
+                                onChange={(e) => { setInvoiceSearch(e.target.value); setInvoicePage(1); }}
+                            />
+                        </div>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto">
+                        {filteredAuthorized.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center h-full gap-3 text-slate-400 py-16">
+                                <CheckCircle2 size={40} className="opacity-20" />
+                                <p className="text-sm font-medium">
+                                    {(rawInvoices || []).length === 0
+                                        ? 'No hay facturas en este lote.'
+                                        : 'Sin resultados para la búsqueda.'}
+                                </p>
+                            </div>
+                        ) : (
+                            <table className="w-full text-xs text-left">
+                                <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10">
+                                    <tr className="text-[10px] text-slate-500 font-black uppercase tracking-wide">
+                                        <th className="px-4 py-3">Proveedor</th>
+                                        <th className="px-4 py-3">Empresa</th>
+                                        <th className="px-4 py-3">Factura</th>
+                                        <th className="px-4 py-3 hidden lg:table-cell">UUID</th>
+                                        <th className="px-4 py-3">Banco</th>
+                                        <th className="px-4 py-3 text-center">Moneda</th>
+                                        <th className="px-4 py-3 text-right">Monto</th>
+                                        <th className="px-4 py-3 hidden sm:table-cell">Vencimiento</th>
+                                        <th className="px-4 py-3 text-center">Estado</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {paginatedAuthorized.map((inv, idx) => (
+                                        <tr key={inv.id || idx} className="hover:bg-blue-50/30 transition-colors">
+                                            <td className="px-4 py-3 font-medium text-slate-800">
+                                                <div className="flex flex-col gap-0.5">
+                                                    <span className="truncate max-w-[160px]" title={inv.providerName}>{inv.providerName}</span>
+                                                    <div className="flex gap-1">
+                                                        {inv.meta?.isH2H && <span className="bg-indigo-600 text-white text-[8px] px-1 py-0.5 rounded-sm font-black uppercase">H2H</span>}
+                                                        {inv.meta?.isKissflow && <span className="bg-purple-600 text-white text-[8px] px-1 py-0.5 rounded-sm font-black uppercase">KF</span>}
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td className="px-4 py-3 text-slate-500">{inv.meta?.company || inv.company || '—'}</td>
+                                            <td className="px-4 py-3 font-mono font-bold text-slate-700">{inv.meta?.invoice || '—'}</td>
+                                            <td className="px-4 py-3 font-mono text-slate-400 hidden lg:table-cell">
+                                                <span className="truncate max-w-[180px] block" title={inv.uuid}>
+                                                    {inv.uuid ? `${inv.uuid.substring(0, 16)}…` : '—'}
+                                                </span>
+                                            </td>
+                                            <td className="px-4 py-3 text-slate-500 text-[10px]">{getBankName(inv.bankId)}</td>
+                                            <td className="px-4 py-3 text-center">
+                                                <Badge status={inv.currency === 'USD' ? 'success' : 'info'}>{inv.currency || 'MXN'}</Badge>
+                                            </td>
+                                            <td className="px-4 py-3 text-right font-bold text-slate-800">{formatCurrency(inv.amount)}</td>
+                                            <td className="px-4 py-3 text-slate-500 hidden sm:table-cell">{inv.dueDate || '—'}</td>
+                                            <td className="px-4 py-3 text-center">
+                                                <Badge status="success">AUTORIZADA</Badge>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        )}
+                    </div>
+
+                    {/* Paginación */}
+                    {totalAuthPages > 1 && (
+                        <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 shrink-0 bg-white">
+                            <span className="text-xs text-slate-400">
+                                {((invoicePage - 1) * ITEMS_PER_PAGE) + 1}–{Math.min(invoicePage * ITEMS_PER_PAGE, filteredAuthorized.length)} de {filteredAuthorized.length}
+                            </span>
+                            <div className="flex items-center gap-1">
+                                <button
+                                    onClick={() => setInvoicePage(p => Math.max(1, p - 1))}
+                                    disabled={invoicePage === 1}
+                                    className="p-1.5 rounded-md hover:bg-slate-100 disabled:opacity-30 transition-colors"
+                                >
+                                    <ChevronLeft size={16} className="text-slate-500" />
+                                </button>
+                                <span className="text-xs font-bold text-slate-600 px-2">{invoicePage} / {totalAuthPages}</span>
+                                <button
+                                    onClick={() => setInvoicePage(p => Math.min(totalAuthPages, p + 1))}
+                                    disabled={invoicePage === totalAuthPages}
+                                    className="p-1.5 rounded-md hover:bg-slate-100 disabled:opacity-30 transition-colors"
+                                >
+                                    <ChevronRight size={16} className="text-slate-500" />
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                {/* Modal: grupos de pago post-dispersión */}
+                {showGroupsView && (
+                    <Modal isOpen={true} onClose={() => setShowGroupsView(false)} title="GRUPOS DE PAGOS" size="lg">
+                        <div className="p-4 space-y-3">
+                            {processedGroups.h2h.concat(processedGroups.general).map((group, idx) => renderProviderAccordion(group, idx))}
+                        </div>
+                    </Modal>
+                )}
+            </div>
+        );
+    }
 
     return (
-        <div className="p-6 h-full flex flex-col space-y-6 animate-fade-in-up">
 
+        <div className="p-6 h-full flex flex-col space-y-6 animate-fade-in-up">
             {/* Header & Controls */}
-            <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
+            <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 shrink-0">
                 <div>
                     <h1 className="text-2xl font-bold tracking-tight text-slate-800">
-                        {isProposal ? 'Gestión de Pagos' : 'Pagos Autorizados'}
+                        {isProposal ? 'Gestión de Pagos' : isAuthorized ? 'Pagos Autorizados' : 'Historial de Rechazos'}
                     </h1>
                     <div className="flex flex-wrap items-center gap-3 mt-1">
                         <p className="text-slate-500">
@@ -632,16 +1140,14 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
                 </div>
                 <div className="flex flex-wrap gap-2 w-full xl:w-auto">
                     {isProposal && !isLocked && (
-                        <Button
-                            variant="primary"
-                            className="bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 shadow-lg shadow-blue-200 animate-pulse border-none text-white"
-                            onClick={handleFinalizeBatch}
-                        >
-                            FINALIZAR PROCESO
-                        </Button>
-                    )}
-                    {isProposal && !isLocked && (
                         <>
+                            <Button
+                                variant="primary"
+                                className="bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 shadow-lg shadow-blue-200 animate-pulse border-none text-white"
+                                onClick={handleFinalizeBatch}
+                            >
+                                FINALIZAR PROCESO
+                            </Button>
                             <Button
                                 variant="success"
                                 className="bg-emerald-600 hover:bg-emerald-700 text-white shadow-md"
@@ -649,885 +1155,538 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
                                 onClick={() => handleAuthorize(rawInvoices)}
                                 disabled={rawInvoices.length === 0}
                             >
-                                Autorizar Propuesta Completa
-                            </Button>
-                            <Button
-                                variant="danger"
-                                className="bg-red-600 hover:bg-red-700 text-white shadow-md"
-                                icon={X}
-                                onClick={() => handleReject(rawInvoices)}
-                                disabled={rawInvoices.length === 0}
-                            >
-                                Rechazar Propuesta Completa
+                                Autorizar Todo
                             </Button>
                         </>
                     )}
                 </div>
             </div>
 
-            {/* Alerta Crítica de Errores Fiscales (JSON #6) */}
+            {/* Alerta Crítica de Errores Fiscales */}
             {kpis.fiscalErrors > 0 && (
                 <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded-r-xl flex items-center justify-between animate-pulse">
                     <div className="flex items-center gap-3">
                         <ShieldAlert className="text-red-600" size={24} />
-                        <p className="text-sm text-red-800 font-medium">Se han detectado <b>{kpis.fiscalErrors}</b> facturas con inconsistencias fiscales (TAR Code vs UUID). Por favor, revíselas antes de procesar el pago.</p>
+                        <p className="text-sm text-red-800 font-medium">Se han detectado <b>{kpis.fiscalErrors}</b> facturas con inconsistencias fiscales. Por favor, revíselas antes de procesar el pago.</p>
                     </div>
                 </div>
             )}
 
-            {/* Ajuste en el Card de Dispersión para mostrar nueva opción */}
-            {isAuthorized && (
-                <Card className="bg-emerald-50 border-emerald-100">
-                    {!hasJustFinished ? (
-                        <div className="flex flex-col md:flex-row gap-6 items-end">
-                            <div className="flex-1 w-full">
-                                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 block font-mono">Importe Global Autorizado a Pagar</label>
-                                <div className="relative">
-                                    <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-500" size={18} />
-                                    <input
-                                        type="text"
-                                        value={globalAmountInput}
-                                        onChange={(e) => {
-                                            const val = e.target.value.replace(/[^0-9.]/g, '');
-                                            if ((val.match(/\./g) || []).length <= 1) {
-                                                setGlobalAmountInput(val);
-                                            }
-                                        }}
-                                        placeholder="0.00"
-                                        className="w-full pl-10 pr-4 py-3 rounded-lg border-2 border-emerald-200 focus:border-emerald-500 outline-none font-bold text-lg bg-white"
-                                    />
+            {/* KPIs Grid - Rediseñado */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {/* CARD 1: TOTAL POR COMPAÑIA */}
+                <Card className="h-64 flex flex-col p-0 overflow-hidden border-t-4 border-t-indigo-500">
+                    <div className="p-3 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
+                        <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Total por Compañía</span>
+                        <Building2 size={14} className="text-indigo-500" />
+                    </div>
+                    <div className="flex-1 overflow-y-auto">
+                        <table className="w-full text-[10px] text-left">
+                            <thead className="sticky top-0 bg-white border-b border-slate-100 shadow-sm">
+                                <tr className="text-slate-400 font-bold">
+                                    <th className="p-2">Compañía</th>
+                                    <th className="p-2 text-right">MXN</th>
+                                    <th className="p-2 text-right">USD</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-50">
+                                {Object.entries(kpis.companyTotals).map(([name, totals]) => (
+                                    <tr key={name} className="hover:bg-slate-50/50">
+                                        <td className="p-2 font-bold text-slate-700 truncate max-w-[80px]" title={name}>{name}</td>
+                                        <td className="p-2 text-right font-mono text-slate-600">{formatCurrency(totals.MXN).replace('$', 'MX$ ')}</td>
+                                        <td className="p-2 text-right font-mono text-blue-600">{totals.USD > 0 ? formatCurrency(totals.USD).replace('$', 'US$ ') : '—'}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </Card>
+
+                {/* CARD 2: TOTAL POR BANCO Y COMPAÑIA */}
+                <Card className="h-64 flex flex-col p-0 overflow-hidden border-t-4 border-t-amber-500">
+                    <div className="p-3 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
+                        <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Total Banco / Compañía</span>
+                        <Landmark size={14} className="text-amber-500" />
+                    </div>
+                    <div className="flex-1 overflow-y-auto">
+                        <table className="w-full text-[9px] text-left">
+                            <thead className="sticky top-0 bg-white border-b border-slate-100 shadow-sm">
+                                <tr className="text-slate-400 font-bold">
+                                    <th className="p-2">Banco / Co.</th>
+                                    <th className="p-2 text-right">MXN</th>
+                                    <th className="p-2 text-right">USD</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-50">
+                                {Object.entries(kpis.bankCompanyTotals).map(([bkName, data]) => (
+                                    <React.Fragment key={bkName}>
+                                        <tr className="bg-slate-50/80 font-black text-slate-800">
+                                            <td className="p-2 uppercase">{bkName}</td>
+                                            <td className="p-2 text-right">{formatCurrency(data.MXN).replace('$', '')}</td>
+                                            <td className="p-2 text-right">{data.USD > 0 ? formatCurrency(data.USD).replace('$', 'US$ ') : '—'}</td>
+                                        </tr>
+                                        {Object.entries(data.companies).map(([coName, coTotals]) => (
+                                            <tr key={coName} className="text-slate-500 italic">
+                                                <td className="p-1 pl-4 truncate max-w-[80px]">{coName}</td>
+                                                <td className="p-1 text-right">{formatCurrency(coTotals.MXN).replace('$', '')}</td>
+                                                <td className="p-1 text-right">{coTotals.USD > 0 ? formatCurrency(coTotals.USD).replace('$', '') : '—'}</td>
+                                            </tr>
+                                        ))}
+                                    </React.Fragment>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </Card>
+
+                {/* CARD 3: TOTAL HSH (H2H) */}
+                <Card className="h-64 flex flex-col justify-between border-t-4 border-t-blue-500">
+                    <div>
+                        <div className="flex items-center justify-between mb-4">
+                            <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Total HSH (H2H)</span>
+                            <Users size={14} className="text-blue-500" />
+                        </div>
+
+                        <div className="space-y-4">
+                            <div className="space-y-1">
+                                <p className="text-[9px] font-bold text-slate-400 uppercase">Total por Pagar H2H</p>
+                                <div className="flex justify-between items-baseline border-b border-slate-100 pb-1">
+                                    <span className="text-[10px] font-bold text-slate-500">MXN</span>
+                                    <span className="text-sm font-black text-slate-700 font-mono">{formatCurrency(kpis.h2h.pending.MXN)}</span>
+                                </div>
+                                <div className="flex justify-between items-baseline border-b border-slate-100 pb-1">
+                                    <span className="text-[10px] font-bold text-blue-500">USD</span>
+                                    <span className="text-sm font-black text-blue-700 font-mono">{formatCurrency(kpis.h2h.pending.USD).replace('MXN', 'USD')}</span>
                                 </div>
                             </div>
-                            <Button variant="success" icon={CheckCircle2} onClick={handleGlobalConfirm} disabled={rawInvoices.length === 0}>
-                                Dispersar Pagos (ERP)
-                            </Button>
-                        </div>
-                    ) : (
-                        <div className="flex flex-col sm:flex-row items-center justify-between p-2 gap-4">
-                            <div className="flex items-center gap-3">
-                                <div className="p-2 bg-emerald-500 text-white rounded-full"><CheckCircle2 size={24} /></div>
-                                <div>
-                                    <h4 className="font-bold text-emerald-900">¡Dispersión Exitosa!</h4>
-                                    <p className="text-sm text-emerald-700">Las facturas han sido enviadas al ERP correctamente.</p>
+
+                            <div className="space-y-1 bg-emerald-50/50 p-2 rounded-lg border border-emerald-100">
+                                <p className="text-[9px] font-bold text-emerald-600 uppercase">Total Aplicado (Autorizado)</p>
+                                <div className="flex justify-between items-baseline">
+                                    <span className="text-[10px] font-bold text-emerald-500">MXN</span>
+                                    <span className="text-sm font-black text-emerald-700 font-mono">{formatCurrency(kpis.h2h.applied.MXN)}</span>
+                                </div>
+                                <div className="flex justify-between items-baseline">
+                                    <span className="text-[10px] font-bold text-emerald-500">USD</span>
+                                    <span className="text-sm font-black text-emerald-700 font-mono">{formatCurrency(kpis.h2h.applied.USD).replace('MXN', 'USD')}</span>
                                 </div>
                             </div>
-                            <Button variant="primary" icon={Layers} onClick={() => setShowGroupsView(true)}>
-                                VER GRUPOS DE PAGOS
-                            </Button>
-                        </div>
-                    )}
-                </Card>
-            )}
-
-            {/* KPIs Grid */}
-            <div className={`grid grid-cols-2 ${isProposal ? 'lg:grid-cols-3 xl:grid-cols-6' : 'lg:grid-cols-4'} gap-4`}>
-                {isProposal && (
-                    <>
-                        <Card className="relative overflow-hidden border-blue-100 bg-blue-50/20">
-                            <p className="text-[10px] font-bold text-blue-600 uppercase tracking-tight">Propuesta General (Base)</p>
-                            <h3 className="text-xl font-bold text-slate-700 mt-1">{formatCurrency(kpis.totalToPay)}</h3>
-                            <div className="absolute right-3 top-3 opacity-20"><DollarSign size={16} /></div>
-                        </Card>
-
-                        <Card className="relative overflow-hidden group border-emerald-100 bg-emerald-50/30">
-                            <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-tight">Monto Autorizado</p>
-                            <h3 className="text-xl font-bold text-emerald-700 mt-1">{formatCurrency(kpis.totalAuthorized)}</h3>
-                            <div className="absolute right-3 top-3 p-1.5 bg-emerald-100 text-emerald-600 rounded-lg"><CheckCircle2 size={16} /></div>
-                        </Card>
-                    </>
-                )}
-
-                <Card className={`relative overflow-hidden group ${isProposal ? 'border-primary/20 bg-primary/5 shadow-md ring-2 ring-primary/10' : ''}`}>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tight">
-                        {isProposal ? 'Monto Total Propuesta (Restante)' : 'Monto Total Autorizado'}
-                    </p>
-                    <h3 className="text-xl font-bold text-slate-800 mt-1">
-                        {formatCurrency(isProposal ? kpis.totalPending : kpis.totalToPay)}
-                    </h3>
-                    <div className="absolute right-3 top-3 p-1.5 bg-blue-50 text-blue-600 rounded-lg"><DollarSign size={16} /></div>
-                </Card>
-
-                <Card className="relative">
-                    <p className="text-xs font-bold text-slate-400 uppercase">Histórico Procesados</p>
-                    <h3 className="text-2xl font-bold text-slate-600 mt-1">{formatCurrency(kpis.totalPaid)}</h3>
-                    <div className="absolute right-4 top-4 p-2 bg-slate-50 text-slate-400 rounded-lg"><Clock size={20} /></div>
-                </Card>
-
-                <Card className="relative">
-                    <p className="text-xs font-bold text-slate-400 uppercase">Total Proveedores</p>
-                    <h3 className="text-2xl font-bold text-slate-800 mt-1">{kpis.providersCount}</h3>
-                    <div className="absolute right-4 top-4 p-2 bg-indigo-50 text-indigo-600 rounded-lg"><Users size={20} /></div>
-                </Card>
-                <Card className="relative">
-                    <p className="text-xs font-bold text-slate-400 uppercase">Grupos Activos</p>
-                    <h3 className="text-2xl font-bold text-slate-800 mt-1">{kpis.groupsCount}</h3>
-                    <div className="absolute right-4 top-4 p-2 bg-amber-50 text-amber-600 rounded-lg"><Layers size={20} /></div>
-                </Card>
-            </div>
-
-            {/* NUEVA PANTALLA: LISTA DE GRUPOS DE PROVEEDOR */}
-            {showGroupsView && (
-                <Modal isOpen={true} onClose={() => setShowGroupsView(false)} title="LISTA DE GRUPOS DE PROVEEDOR" size="lg">
-                    <div className="space-y-4">
-                        <p className="text-sm text-slate-500 mb-4">Proveedores procesados en el lote actual con estatus de pago en ERP.</p>
-                        <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-2">
-                            {processedGroups.map((group, idx) => (
-                                <details key={idx} className="group border border-slate-200 rounded-xl bg-white overflow-hidden shadow-sm">
-                                    <summary className="flex items-center justify-between p-4 cursor-pointer hover:bg-slate-50 list-none">
-                                        <div className="flex items-center gap-4">
-                                            <div className="h-10 w-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 group-open:bg-primary group-open:text-white transition-colors">
-                                                <Users size={20} />
-                                            </div>
-                                            <div>
-                                                <h4 className="font-bold text-slate-800">{group.name}</h4>
-                                                <p className="text-xs text-slate-500">{group.count} facturas autorizadas</p>
-                                            </div>
-                                        </div>
-                                        <div className="flex items-center gap-6">
-                                            <div className="text-right">
-                                                <p className={`font-bold ${group.invoices.every(i => i.status === 'RECHAZADO MANUAL') ? 'text-red-400 line-through' : 'text-slate-900'}`}>
-                                                    {formatCurrency(group.total)}
-                                                </p>
-                                                <Badge
-                                                    status={group.invoices.every(i => i.status === 'RECHAZADO MANUAL') ? 'danger' : 'info'}
-                                                    className="text-[10px] py-0"
-                                                >
-                                                    {group.invoices.every(i => i.status === 'RECHAZADO MANUAL') ? 'RECHAZADO' : 'PROCESANDO PAGO'}
-                                                </Badge>
-                                            </div>
-                                            <div className="flex items-center gap-2">
-                                                {group.invoices.some(i => i.status === 'PROCESANDO PAGO') && (
-                                                    <button
-                                                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleRejectProviderGroup(group.name); }}
-                                                        className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-all"
-                                                        title="Rechazar grupo de pago"
-                                                    >
-                                                        <ShieldAlert size={18} />
-                                                    </button>
-                                                )}
-                                                <ChevronRight size={18} className="text-slate-300 group-open:rotate-90 transition-transform" />
-                                            </div>
-                                        </div>
-                                    </summary>
-                                    <div className="p-4 border-t border-slate-100 bg-slate-50/50">
-                                        <table className="w-full text-xs text-left">
-                                            <thead>
-                                                <tr className="text-slate-400 font-bold uppercase tracking-tighter border-b border-slate-200">
-                                                    <th className="pb-2">Factura</th>
-                                                    <th className="pb-2">ID Tracking</th>
-                                                    <th className="pb-2">Fecha Proc.</th>
-                                                    <th className="pb-2 text-right">Importe</th>
-                                                    <th className="pb-2 text-center">Estatus ERP</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody className="divide-y divide-slate-200">
-                                                {group.invoices.map((inv, i) => (
-                                                    <tr key={i} className="text-slate-700">
-                                                        <td className="py-2 font-medium">{inv.meta?.invoice}</td>
-                                                        <td className="py-2 font-mono text-slate-400">{inv.trackingId}</td>
-                                                        <td className="py-2">{inv.processedDate}</td>
-                                                        <td className="py-2 text-right font-bold">{formatCurrency(inv.amount)}</td>
-                                                        <td className="py-2 text-center">
-                                                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${inv.status === 'RECHAZADO MANUAL'
-                                                                    ? 'bg-red-100 text-red-700'
-                                                                    : 'bg-blue-100 text-blue-700 animate-pulse'
-                                                                }`}>
-                                                                {inv.status}
-                                                            </span>
-                                                        </td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </details>
-                            ))}
                         </div>
                     </div>
-                </Modal>
-            )}
+                </Card>
+
+                {/* CARD 4: TOTAL SIN HSH (SIN H2H) */}
+                <Card className="h-64 flex flex-col justify-between border-t-4 border-t-slate-400">
+                    <div>
+                        <div className="flex items-center justify-between mb-4">
+                            <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Total Sin HSH (General)</span>
+                            <DollarSign size={14} className="text-slate-400" />
+                        </div>
+
+                        <div className="space-y-4">
+                            <div className="space-y-1">
+                                <p className="text-[9px] font-bold text-slate-400 uppercase">Total por Pagar Sin H2H</p>
+                                <div className="flex justify-between items-baseline border-b border-slate-100 pb-1">
+                                    <span className="text-[10px] font-bold text-slate-500">MXN</span>
+                                    <span className="text-sm font-black text-slate-700 font-mono">{formatCurrency(kpis.nonH2h.pending.MXN)}</span>
+                                </div>
+                                <div className="flex justify-between items-baseline border-b border-slate-100 pb-1">
+                                    <span className="text-[10px] font-bold text-blue-500">USD</span>
+                                    <span className="text-sm font-black text-blue-700 font-mono">{formatCurrency(kpis.nonH2h.pending.USD).replace('MXN', 'USD')}</span>
+                                </div>
+                            </div>
+
+                            <div className="space-y-1 bg-emerald-50/50 p-2 rounded-lg border border-emerald-100">
+                                <p className="text-[9px] font-bold text-emerald-600 uppercase">Total Aplicado (Autorizado)</p>
+                                <div className="flex justify-between items-baseline">
+                                    <span className="text-[10px] font-bold text-emerald-500">MXN</span>
+                                    <span className="text-sm font-black text-emerald-700 font-mono">{formatCurrency(kpis.nonH2h.applied.MXN)}</span>
+                                </div>
+                                <div className="flex justify-between items-baseline">
+                                    <span className="text-[10px] font-bold text-emerald-500">USD</span>
+                                    <span className="text-sm font-black text-emerald-700 font-mono">{formatCurrency(kpis.nonH2h.applied.USD).replace('MXN', 'USD')}</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </Card>
+            </div>
 
             {/* Tree Section */}
             <div className="flex-1 bg-surface border border-slate-200 shadow-sm rounded-xl flex flex-col z-10 overflow-hidden min-h-[500px]">
-                {/* Breadcrumb Header */}
-                <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row gap-4 justify-between items-center bg-white min-h-[60px]">
-                    {drillLevel > 0 ? (
-                        <div className="flex items-center gap-3">
-                            <button
-                                onClick={goBack} // Corrected: was missing
-                                className="px-3 py-2 hover:bg-slate-100 rounded-lg text-slate-600 transition-colors flex items-center gap-2 bg-slate-50 border border-slate-200 text-sm"
-                            >
-                                <ArrowLeft size={16} /> Atrás
-                            </button>
-                            <div className="h-6 w-px bg-slate-200"></div>
-                            <div className="flex items-center gap-1 text-sm overflow-x-auto whitespace-nowrap">
-                                <button
-                                    onClick={() => { setDrillLevel(0); setSelectedBank(null); setSelectedCompany(null); setSelectedGroup(null); setSelectedProvider(null); }}
-                                    className="text-slate-500 hover:text-primary transition-colors hover:underline"
-                                >
-                                    Bancos
-                                </button>
-                                <ChevronRight size={14} className="text-slate-300" />
-                                <button
-                                    onClick={() => { setDrillLevel(1); setSelectedCompany(null); setSelectedGroup(null); setSelectedProvider(null); }}
-                                    className="text-slate-500 hover:text-primary transition-colors hover:underline"
-                                >
-                                    {selectedBank?.name}
-                                </button>
-                                {drillLevel >= 2 && <>
-                                    <ChevronRight size={14} className="text-slate-300" />
-                                    <button
-                                        onClick={() => { setDrillLevel(2); setSelectedGroup(null); setSelectedProvider(null); }}
-                                        className="text-slate-500 hover:text-primary transition-colors hover:underline"
-                                    >
-                                        {selectedCompany?.name}
-                                    </button>
-                                </>}
-                                {drillLevel >= 3 && <>
-                                    <ChevronRight size={14} className="text-slate-300" />
-                                    <button
-                                        onClick={() => { setDrillLevel(3); setSelectedProvider(null); }}
-                                        className="text-slate-500 hover:text-primary transition-colors hover:underline"
-                                    >
-                                        {selectedGroup?.name}
-                                    </button>
-                                </>}
-                                {drillLevel >= 4 && (
-                                    <>
-                                        <ChevronRight size={14} className="text-slate-300" />
-                                        <span className="font-bold text-primary bg-blue-50 px-2 py-0.5 rounded">{selectedProvider?.name}</span>
-                                    </>
-                                )}
+                {isRejected ? (
+                    <div className="flex flex-col h-full">
+                        <div className="p-4 border-b border-slate-100 bg-white shadow-sm flex flex-col sm:flex-row justify-between items-center gap-4">
+                            <div>
+                                <h2 className="text-lg font-bold text-slate-800 uppercase tracking-tight">Grupos Rechazados {subMode === 'h2h' ? 'H2H' : 'General'}</h2>
+                                <p className="text-xs text-slate-500">Facturas detenidas que pueden ser restauradas a la gestión.</p>
                             </div>
-                        </div>
-                    ) : (
-                        <div className="flex items-center justify-start gap-6 w-full px-2">
-                            {/* Botones Añadir y Exportar reubicados */}
-                            <div className="flex items-center gap-2">
-                                <Button
-                                    variant="secondary"
-                                    icon={Download}
-                                    size="sm"
-                                    disabled={isProposal && isLocked}
-                                >
-                                    Exportar
-                                </Button>
-                                {isProposal && !isLocked && (
-                                    <Button variant="dark" icon={Plus} size="sm" onClick={() => setIsAddModalOpen(true)}>Añadir Factura</Button>
-                                )}
-                            </div>
-
-                            <div className="h-8 w-px bg-slate-200"></div>
-
                             <div className="relative w-full sm:w-80">
                                 <Search size={18} className="absolute left-3 top-2.5 text-slate-400" />
-                                <input
-                                    type="text"
-                                    placeholder="Buscar banco o cuenta..."
-                                    className="block w-full pl-10 pr-3 py-2 border border-slate-200 rounded-lg bg-slate-50 focus:bg-white text-sm"
-                                    value={searchTerm}
-                                    onChange={(e) => setSearchTerm(e.target.value)}
-                                />
+                                <input type="text" placeholder="Buscar proveedor rechazado..." className="block w-full pl-10 pr-3 py-2 border border-slate-200 rounded-lg bg-slate-50 focus:bg-white text-sm outline-none" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
                             </div>
                         </div>
-                    )
-                    }
-                </div>
-
-                <div className="overflow-y-auto flex-1 bg-slate-50/50 p-4">
-                    {drillLevel === 0 && (
-                        // NIVEL 0: BANCOS (CUENTAS PAGADORAS)
-                        <div className="max-w-7xl mx-auto pb-4">
-                            <h2 className="text-lg font-bold text-slate-800 pb-2 border-b border-slate-200/50">Lista cuentas pagadoras</h2>
-                            {(bankTree || []).length === 0 ? (
-                                <div className="p-12 text-center text-slate-500">
-                                    <CheckCircle2 size={48} className="mx-auto mb-4 opacity-50" />
-                                    <p className="text-lg font-medium">No hay catálogos cargados.</p>
-                                    <p className="text-sm mt-2">Ve a "Carga de Datos" y presiona "Cargar Catálogos".</p>
-                                </div>
-                            ) : null}
-
-                            <div className="space-y-6 mt-4">
-                                {Object.entries(
-                                    filteredBanks.reduce((acc, bank) => {
-                                        const key = bank.name || 'Desconocido';
-                                        if (!acc[key]) acc[key] = [];
-                                        acc[key].push(bank);
-                                        return acc;
-                                    }, {})
-                                ).map(([bankName, accounts]) => (
-                                    <div key={bankName} className="animate-fade-in">
-                                        <h3
-                                            className="font-bold text-slate-700 text-sm uppercase tracking-wider mb-2 flex items-center justify-between cursor-pointer hover:text-primary transition-colors group px-1"
-                                            onClick={() => setCollapsedBanks(prev => prev.includes(bankName) ? prev.filter(b => b !== bankName) : [...prev, bankName])}
-                                        >
-                                            <div className="flex items-center gap-2">
-                                                <Building2 size={16} className="text-slate-400 group-hover:text-primary" /> {bankName}
-                                            </div>
-                                            {collapsedBanks.includes(bankName) ? <ChevronDown size={16} className="text-slate-300" /> : <ChevronUp size={16} className="text-slate-300" />}
-                                        </h3>
-
-                                        {!collapsedBanks.includes(bankName) && (
-                                            <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden transition-all">
-                                                <table className="w-full text-sm text-left">
-                                                    <thead className="bg-slate-50/80">
-                                                        <tr className="text-xs text-slate-500 font-semibold">
-                                                            <th className="p-3 w-1/4">Banco</th>
-                                                            <th className="p-3 w-1/4">Cuenta</th>
-                                                            <th className="p-3">ID Cuenta</th>
-                                                            <th className="p-3">Moneda</th>
-                                                            <th className="p-3 text-right">Saldo Propuesta</th>
-                                                            <th className="p-3 text-center">Acciones</th>
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody className="divide-y divide-slate-100">
-                                                        {accounts.map(account => (
-                                                            <tr key={account.id} className="hover:bg-blue-50/50 cursor-pointer" onClick={() => { setSelectedBank(account); setDrillLevel(1); }}>
-                                                                <td className="p-3 font-medium text-slate-800">{account.name}</td>
-                                                                <td className="p-3 font-mono text-slate-600">{account.account}</td>
-                                                                <td className="p-3 font-mono text-xs text-slate-500">{account.id}</td>
-                                                                <td className="p-3">
-                                                                    <Badge status={account.currency === 'USD' ? 'success' : 'info'}>{account.currency}</Badge>
-                                                                </td>
-                                                                <td className={`p-3 text-right font-bold ${account.amount > 0 ? 'text-slate-800' : 'text-slate-400'}`}>
-                                                                    {formatCurrency(account.amount)}
-                                                                </td>
-                                                                <td className="p-3 text-center min-w-[200px]">
-                                                                    <div className="flex flex-wrap items-center justify-center gap-1">
-                                                                        {isProposal && account.invoices?.length > 0 && !isLocked && (
-                                                                            <div className="flex items-center gap-2">
-                                                                                <button
-                                                                                    className="p-2 bg-emerald-50 text-emerald-600 hover:bg-emerald-600 hover:text-white rounded-lg transition-all shadow-sm border border-emerald-100"
-                                                                                    title="Autorizar Banco"
-                                                                                    onClick={(e) => { e.stopPropagation(); handleAuthorize(account.invoices); }}
-                                                                                >
-                                                                                    <CheckCircle2 size={18} />
-                                                                                </button>
-                                                                                <button
-                                                                                    className="p-2 bg-red-50 text-red-600 hover:bg-red-600 hover:text-white rounded-lg transition-all shadow-sm border border-red-100"
-                                                                                    title="No autorizar Banco"
-                                                                                    onClick={(e) => { e.stopPropagation(); handleReject(account.invoices); }}
-                                                                                >
-                                                                                    <X size={18} />
-                                                                                </button>
-                                                                            </div>
-                                                                        )}
-                                                                        {isAuthorized && (
-                                                                            <>
-                                                                                <Badge status="success">AUTORIZADO</Badge>
-                                                                                <button
-                                                                                    className="mt-1 p-1.5 text-red-500 hover:bg-red-50 rounded flex items-center gap-1 text-[10px] font-bold"
-                                                                                    title="Quitar Autorización"
-                                                                                    onClick={(e) => { e.stopPropagation(); handleRevoke(account.invoices); }}
-                                                                                >
-                                                                                    <ArrowLeft size={12} /> REVERTIR
-                                                                                </button>
-                                                                            </>
-                                                                        )}
-                                                                        {isRejected && (
-                                                                            <Badge status="danger">RECHAZADO</Badge>
-                                                                        )}
-                                                                        {!isRejected && (
-                                                                            <button
-                                                                                className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                                                                                title="Reasignar Saldo"
-                                                                                onClick={(e) => { e.stopPropagation(); openReassignModal(account); }}
-                                                                                disabled={account.amount <= 0}
-                                                                            >
-                                                                                <ArrowRightLeft size={16} />
-                                                                            </button>
-                                                                        )}
-                                                                    </div>
-                                                                </td>
-                                                            </tr>
-                                                        ))}
-                                                    </tbody>
-                                                </table>
-                                            </div>
-                                        )}
+                        <div className="flex-1 overflow-y-auto p-6 bg-slate-50/50">
+                            <div className="max-w-5xl mx-auto space-y-4">
+                                {processedGroups.h2h.length + processedGroups.general.length > 0 ? (
+                                    subMode === 'h2h' ? processedGroups.h2h.map((group, idx) => renderProviderAccordion(group, idx)) : processedGroups.general.map((group, idx) => renderProviderAccordion(group, idx))
+                                ) : (
+                                    <div className="text-center py-32 bg-white border border-dashed border-slate-200 rounded-2xl">
+                                        <ShieldAlert size={48} className="mx-auto text-slate-200 mb-4" />
+                                        <p className="text-slate-500 font-medium">No hay grupos rechazados en esta categoría.</p>
                                     </div>
-                                ))}
+                                )}
                             </div>
                         </div>
-                    )}
+                    </div>
+                ) : (
+                    <>
+                        <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row gap-4 justify-between items-center bg-white">
+                            {drillLevel > 0 ? (
+                                <div className="flex items-center gap-3">
+                                    <button onClick={goBack} className="px-3 py-2 hover:bg-slate-100 rounded-lg text-slate-600 transition-colors flex items-center gap-2 bg-slate-50 border border-slate-200 text-sm"><ArrowLeft size={16} /> Atrás</button>
+                                    <div className="h-6 w-px bg-slate-200"></div>
+                                    <div className="flex items-center gap-1 text-sm overflow-x-auto whitespace-nowrap">
+                                        <button onClick={() => { setDrillLevel(0); setSelectedBank(null); setSelectedCompany(null); setSelectedGroup(null); setSelectedProvider(null); }} className="text-slate-500 hover:text-primary transition-colors hover:underline">Bancos</button>
+                                        <ChevronRight size={14} className="text-slate-300" />
+                                        <button onClick={() => { setDrillLevel(1); setSelectedCompany(null); setSelectedGroup(null); setSelectedProvider(null); }} className="text-slate-500 hover:text-primary transition-colors hover:underline">{selectedBank?.name}</button>
+                                        {drillLevel >= 2 && <><ChevronRight size={14} className="text-slate-300" /><button onClick={() => { setDrillLevel(2); setSelectedGroup(null); setSelectedProvider(null); }} className="text-slate-500 hover:text-primary transition-colors hover:underline">{selectedCompany?.name}</button></>}
+                                        {drillLevel >= 3 && <><ChevronRight size={14} className="text-slate-300" /><button onClick={() => { setDrillLevel(3); setSelectedProvider(null); }} className="text-slate-500 hover:text-primary transition-colors hover:underline">{selectedGroup?.name}</button></>}
+                                        {drillLevel >= 4 && <><ChevronRight size={14} className="text-slate-300" /><span className="font-bold text-primary bg-blue-50 px-2 py-0.5 rounded">{selectedProvider?.name}</span></>}
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="flex flex-col sm:flex-row items-center justify-between gap-4 w-full">
+                                    <div className="flex items-center gap-2">
+                                        <Button variant="secondary" icon={Download} size="sm" disabled={isProposal && isLocked}>Exportar</Button>
+                                        {isProposal && !isLocked && <Button variant="dark" icon={Plus} size="sm" onClick={() => setIsAddModalOpen(true)}>Añadir Factura</Button>}
+                                    </div>
+                                    <div className="relative w-full sm:w-80">
+                                        <Search size={18} className="absolute left-3 top-2.5 text-slate-400" />
+                                        <input type="text" placeholder="Buscar en todos los niveles..." className="block w-full pl-10 pr-3 py-2 border border-slate-200 rounded-lg bg-slate-50 focus:bg-white text-sm outline-none" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                                    </div>
+                                </div>
+                            )}
+                        </div>
 
-                    {/* LISTAS GENÉRICAS PARA NIVELES 1, 2, 3 */}
-                    {[1, 2, 3].includes(drillLevel) && (
-                        <div className="max-w-6xl mx-auto animate-fade-in">
-                            <h2 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-4">
-                                {drillLevel === 1 ? 'Selecciona una Compañía' :
-                                    drillLevel === 2 ? `Grupos en ${selectedCompany?.name}` :
-                                        `Proveedores en ${selectedGroup?.name}`}
-                            </h2>
-
-                            <div className="grid grid-cols-1 gap-3">
-                                {(() => {
-                                    // Determinar lista actual según nivel
-                                    let currentList = [];
-                                    let icon = null;
-                                    let colorClass = "";
-
-                                    if (drillLevel === 1) {
-                                        currentList = selectedBank?.items || [];
-                                        icon = <Briefcase size={20} />;
-                                        colorClass = "bg-indigo-500";
-                                    } else if (drillLevel === 2) {
-                                        currentList = selectedCompany?.items || [];
-                                        icon = <Layers size={20} />;
-                                        colorClass = "bg-emerald-500";
-                                    } else if (drillLevel === 3) {
-                                        currentList = selectedGroup?.items || [];
-                                        icon = <Users size={20} />;
-                                        colorClass = "bg-amber-500";
-                                    }
-
-                                    return currentList.map((item, idx) => (
-                                        <div key={idx}
-                                            className="bg-white border border-slate-200 p-4 rounded-xl shadow-sm hover:shadow-md transition-all cursor-pointer flex items-center justify-between"
-                                            onClick={() => {
-                                                if (drillLevel === 1) { setSelectedCompany(item); setDrillLevel(2); }
-                                                else if (drillLevel === 2) { setSelectedGroup(item); setDrillLevel(3); }
-                                                else if (drillLevel === 3) { setSelectedProvider(item); setDrillLevel(4); }
-                                            }}
-                                        >
-                                            <div className="flex items-center gap-4">
-                                                <div className={`h-10 w-10 rounded-lg flex items-center justify-center text-white shadow-sm ${colorClass}`}>
-                                                    {icon}
-                                                </div>
-                                                <div>
-                                                    <h4 className="font-bold text-slate-800">
-                                                        {item.name}
-                                                    </h4>
-                                                    {drillLevel === 2 && <p className="text-[10px] font-mono text-slate-400 uppercase">Código: {item.groupCode || item.id}</p>}
-                                                    <p className="text-xs text-slate-500">{(item.items || []).length} {drillLevel === 3 ? 'Facturas' : (drillLevel === 2 ? 'Proveedores' : 'Grupos')} activos</p>
-                                                </div>
-                                            </div>
-                                            <div className="text-right flex items-center gap-4">
-                                                <div>
-                                                    <p className="font-bold text-lg text-slate-800">{formatCurrency(item.amount)}</p>
-                                                    <span className="text-[10px] text-blue-600 font-bold uppercase tracking-tight">
-                                                        {drillLevel === 1 ? 'Ver Grupos de Pagos' :
-                                                            drillLevel === 2 ? 'Ver Proveedores' :
-                                                                'Ver Facturas'}
-                                                    </span>
-                                                </div>
-                                                <div className="flex flex-col items-end gap-2">
-                                                    {isProposal && item.invoices?.length > 0 && !isLocked && (
-                                                        <div className="flex items-center gap-2">
-                                                            <button
-                                                                className="flex items-center gap-2 px-3 py-2 bg-emerald-50 text-emerald-700 rounded-lg hover:bg-emerald-600 hover:text-white transition-all shadow-sm border border-emerald-200 font-bold text-xs"
-                                                                title="Autorizar este nivel"
-                                                                onClick={(e) => { e.stopPropagation(); handleAuthorize(item.invoices || []); }}
-                                                            >
-                                                                <CheckCircle2 size={16} /> AUTORIZAR
-                                                            </button>
-                                                            <button
-                                                                className="flex items-center gap-2 px-3 py-2 bg-red-50 text-red-700 rounded-lg hover:bg-red-600 hover:text-white transition-all shadow-sm border border-red-200 font-bold text-xs"
-                                                                title="No autorizar este nivel"
-                                                                onClick={(e) => { e.stopPropagation(); handleReject(item.invoices || []); }}
-                                                            >
-                                                                <X size={16} /> RECHAZAR
-                                                            </button>
+                        <div className="overflow-y-auto flex-1 bg-slate-50/50 p-4">
+                            {drillLevel === 0 && (
+                                <div className="max-w-7xl mx-auto pb-4">
+                                    <h2 className="text-lg font-bold text-slate-800 pb-2 border-b border-slate-200/50">Lista cuentas pagadoras</h2>
+                                    {(bankTree || []).length === 0 ? (
+                                        <div className="p-12 text-center text-slate-500">
+                                            <CheckCircle2 size={48} className="mx-auto mb-4 opacity-50" />
+                                            <p className="text-lg font-medium">No hay catálogos cargados.</p>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-6 mt-4">
+                                            {Object.entries(filteredBanks.reduce((acc, bank) => { const key = bank.name || 'Desconocido'; if (!acc[key]) acc[key] = []; acc[key].push(bank); return acc; }, {})).map(([bankName, accounts]) => (
+                                                <div key={bankName} className="animate-fade-in">
+                                                    <h3 className="font-bold text-slate-700 text-sm uppercase tracking-wider mb-2 flex items-center justify-between cursor-pointer hover:text-primary transition-colors group px-1" onClick={() => setCollapsedBanks(prev => prev.includes(bankName) ? prev.filter(b => b !== bankName) : [...prev, bankName])}>
+                                                        <div className="flex items-center gap-2"><Building2 size={16} className="text-slate-400 group-hover:text-primary" /> {bankName}</div>
+                                                        {collapsedBanks.includes(bankName) ? <ChevronDown size={16} className="text-slate-300" /> : <ChevronUp size={16} className="text-slate-300" />}
+                                                    </h3>
+                                                    {!collapsedBanks.includes(bankName) && (
+                                                        <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                                                            <table className="w-full text-sm text-left">
+                                                                <thead className="bg-slate-50/80">
+                                                                    <tr className="text-xs text-slate-500 font-semibold">
+                                                                        <th className="p-3 w-1/4">Banco</th><th className="p-3 w-1/4">Cuenta</th><th className="p-3">Moneda</th><th className="p-3 text-right">Saldo Propuesta</th><th className="p-3 text-center">Acciones</th>
+                                                                    </tr>
+                                                                </thead>
+                                                                <tbody className="divide-y divide-slate-100">
+                                                                    {accounts.map(account => (
+                                                                        <tr key={account.id} className="hover:bg-blue-50/50 cursor-pointer" onClick={() => { setSelectedBank(account); setDrillLevel(1); }}>
+                                                                            <td className="p-3 font-medium text-slate-800">{account.name}</td>
+                                                                            <td className="p-3 font-mono text-slate-600">{account.account}</td>
+                                                                            <td className="p-3"><Badge status={account.currency === 'USD' ? 'success' : 'info'}>{account.currency}</Badge></td>
+                                                                            <td className={`p-3 text-right font-bold ${account.amount > 0 ? 'text-slate-800' : 'text-slate-400'}`}>{formatCurrency(account.amount)}</td>
+                                                                            <td className="p-3 text-center">
+                                                                                <div className="flex items-center justify-center gap-1">
+                                                                                    {isProposal && !isLocked && <button className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg" onClick={(e) => { e.stopPropagation(); handleAuthorize(account.invoices); }}><CheckCircle2 size={18} /></button>}
+                                                                                    <button className="p-2 text-slate-400 hover:text-blue-600 rounded-lg" onClick={(e) => { e.stopPropagation(); openReassignModal(account); }}><ArrowRightLeft size={16} /></button>
+                                                                                </div>
+                                                                            </td>
+                                                                        </tr>
+                                                                    ))}
+                                                                </tbody>
+                                                            </table>
                                                         </div>
                                                     )}
-                                                    {isAuthorized && (
-                                                        <>
-                                                            <span className="text-[9px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100">AUTORIZADO</span>
-                                                            <button
-                                                                className="p-1.5 bg-red-50 text-red-600 rounded-lg hover:bg-red-600 hover:text-white transition-all shadow-sm"
-                                                                title="Quitar Autorización"
-                                                                onClick={(e) => { e.stopPropagation(); handleRevoke(item.invoices || []); }}
-                                                            >
-                                                                <ArrowLeft size={14} />
-                                                            </button>
-                                                        </>
-                                                    )}
-                                                    {isRejected && (
-                                                        <span className="text-[9px] font-black text-red-600 bg-red-50 px-2 py-0.5 rounded border border-red-100">RECHAZADO</span>
-                                                    )}
-                                                    <ChevronRight size={18} className="text-slate-300" />
                                                 </div>
-                                            </div>
+                                            ))}
                                         </div>
-                                    ));
-                                })()}
-                            </div>
-                        </div>
-                    )}
-
-                    {/* NIVEL 4: FACTURAS (SEGMENTADAS POR FISCALES / NO FISCALES) */}
-                    {drillLevel === 4 && selectedProvider && (
-                        (() => {
-                            const { fiscal, nonFiscal } = getSegmentedInvoices(selectedProvider);
-
-                            // Lógica de Filtrado Local (Búsqueda por UUID o Monto)
-                            const filteredFiscal = fiscal.filter(inv =>
-                                invoiceSearch === '' ||
-                                (inv.uuid || '').toLowerCase().includes(invoiceSearch.toLowerCase()) ||
-                                inv.amount.toString().includes(invoiceSearch) ||
-                                String(inv.meta?.invoice || '').toLowerCase().includes(invoiceSearch.toLowerCase())
-                            );
-
-                            // Lógica de Ordenamiento Dinámico
-                            const sortData = (data) => {
-                                if (!sortConfig.key) return data;
-                                return [...data].sort((a, b) => {
-                                    const aVal = a.meta?.[sortConfig.key] ?? a[sortConfig.key];
-                                    const bVal = b.meta?.[sortConfig.key] ?? b[sortConfig.key];
-
-                                    if (aVal === bVal) return 0;
-
-                                    // Manejo de nulos
-                                    if (aVal === null || aVal === undefined) return 1;
-                                    if (bVal === null || bVal === undefined) return -1;
-
-                                    const result = aVal < bVal ? -1 : 1;
-                                    return sortConfig.direction === 'asc' ? result : -result;
-                                });
-                            };
-
-                            const sortedFiscal = sortData(filteredFiscal);
-                            const sortedNonFiscal = sortData(nonFiscal);
-
-                            // Lógica de Paginación
-                            const totalPages = Math.ceil(sortedFiscal.length / ITEMS_PER_PAGE);
-                            const paginatedFiscal = sortedFiscal.slice(
-                                (invoicePage - 1) * ITEMS_PER_PAGE,
-                                invoicePage * ITEMS_PER_PAGE
-                            );
-
-                            return (
-                                <div className="space-y-8 animate-fade-in pb-12">
-                                    {/* Sección Fiscales */}
-                                    <div className="space-y-3">
-                                        <div className="flex flex-col sm:flex-row justify-between items-end sm:items-center gap-4 mb-2">
-                                            <div
-                                                className="flex items-center gap-2 cursor-pointer group hover:opacity-80 transition-opacity"
-                                                onClick={() => setIsFiscalExpanded(!isFiscalExpanded)}
-                                            >
-                                                <div className="bg-emerald-100 text-emerald-700 p-1.5 rounded-lg"><FileText size={18} /></div>
-                                                <h3 className="font-bold text-slate-700">Facturas Fiscales (UUID)</h3>
-                                                <span className="bg-slate-100 text-slate-600 text-xs px-2 py-0.5 rounded-full font-bold">{filteredFiscal.length}</span>
-                                                {isFiscalExpanded ? <ChevronUp size={16} className="text-slate-400" /> : <ChevronDown size={16} className="text-slate-400" />}
-                                            </div>
-
-                                            {/* Barra de búsqueda local */}
-                                            <div className="relative w-full sm:w-64">
-                                                <Search size={16} className="absolute left-3 top-2.5 text-slate-400" />
-                                                <input
-                                                    type="text"
-                                                    placeholder="Filtrar por UUID o monto..."
-                                                    className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg outline-none focus:border-emerald-500"
-                                                    value={invoiceSearch}
-                                                    onChange={(e) => { setInvoiceSearch(e.target.value); setInvoicePage(1); }}
-                                                />
-                                            </div>
+                                    )}
+                                </div>
+                            )}
+                            {[1, 2, 3].includes(drillLevel) && (
+                                <div className="max-w-6xl mx-auto animate-fade-in">
+                                    <div className="flex justify-between items-center mb-4">
+                                        <h2 className="text-sm font-bold text-slate-500 uppercase tracking-wider">
+                                            {drillLevel === 1 ? 'Selecciona una Compañía' : drillLevel === 2 ? 'Selecciona un Grupo' : 'Lista de Proveedores'}
+                                        </h2>
+                                        <div className="relative w-64">
+                                            <Search size={14} className="absolute left-3 top-2.5 text-slate-400" />
+                                            <input type="text" placeholder="Filtrar en este nivel..." className="w-full pl-9 pr-3 py-2 text-xs border border-slate-200 rounded-lg bg-white outline-none focus:ring-2 focus:ring-primary/20" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
                                         </div>
+                                    </div>
+                                    <div className="grid grid-cols-1 gap-3">
+                                        {(() => {
+                                            const baseList = drillLevel === 1 ? selectedBank?.items : drillLevel === 2 ? selectedCompany?.items : selectedGroup?.items;
+                                            // FILTRADO DINÁMICO: Aplicamos el término de búsqueda al nivel actual
+                                            const currentList = (baseList || []).filter(item =>
+                                                String(item.name || '').toLowerCase().includes(searchTerm.toLowerCase())
+                                            );
 
-                                        {isFiscalExpanded && (filteredFiscal.length > 0 ? (
-                                            <div className="bg-white border border-emerald-100 rounded-xl overflow-hidden shadow-sm">
-                                                <div className="overflow-x-auto">
-                                                    <table className="w-full text-left border-collapse min-w-[1600px]">
-                                                        <thead className="bg-emerald-50/50">
-                                                            <tr className="text-xs uppercase text-slate-600 font-bold tracking-wider">
-                                                                {[
-                                                                    { label: 'Invoice', key: 'invoice' },
-                                                                    { label: 'Posted', key: 'posted' },
-                                                                    { label: 'Balance mn', key: 'balance_mn', align: 'right' },
-                                                                    { label: 'New Balance MN', key: 'new_balance_mn', align: 'right' },
-                                                                    { label: 'Due date', key: 'due_date' },
-                                                                    { label: 'Currency code', key: 'currency_code', align: 'center' },
-                                                                    { label: 'Open payable', key: 'openpayable' },
-                                                                    { label: 'Description Tran Doc Type', key: 'description_tran_doc_type' },
-                                                                    { label: 'Transac_ref_c', key: 'transac_ref_c' },
-                                                                    { label: 'Transac_num_c', key: 'transac_num_c' },
-                                                                    { label: 'Fiscal Folio', key: 'uuid' },
-                                                                    { label: 'TAR Code', key: 'tar_code', align: 'center' },
-                                                                    { label: 'HoldInvoice', key: 'holdinvoice', align: 'center' },
-                                                                    { label: 'Hold Payments', key: 'hold_payments', align: 'center' },
-                                                                    { label: 'MsgHoldPayment_c', key: 'msgholdpayment_c' }
-                                                                ].map((col) => (
-                                                                    <th
-                                                                        key={col.key}
-                                                                        className={`p-4 whitespace-nowrap cursor-pointer hover:bg-emerald-100/50 transition-colors ${col.align === 'right' ? 'text-right' : col.align === 'center' ? 'text-center' : ''}`}
-                                                                        onClick={() => {
-                                                                            const dir = sortConfig.key === col.key && sortConfig.direction === 'asc' ? 'desc' : 'asc';
-                                                                            setSortConfig({ key: col.key, direction: dir });
-                                                                        }}
-                                                                    >
-                                                                        <div className={`flex items-center gap-1 ${col.align === 'right' ? 'justify-end' : col.align === 'center' ? 'justify-center' : ''}`}>
-                                                                            {col.label}
-                                                                            <ArrowUpDown size={12} className={sortConfig.key === col.key ? 'text-primary' : 'text-slate-300'} />
-                                                                        </div>
-                                                                    </th>
-                                                                ))}
-                                                                <th className="p-4 text-center sticky right-0 bg-emerald-50/50">Acción</th>
-                                                            </tr>
-                                                        </thead>
-                                                        <tbody className="divide-y divide-emerald-50 text-sm">
-                                                            {paginatedFiscal.map(inv => (
-                                                                <tr key={inv.id} className={`hover:bg-slate-50 transition-colors ${isRejected ? 'bg-red-50/60' : ''}`}>
-                                                                    <td className="p-4 font-medium text-slate-700">{String(inv.meta?.invoice ?? '')}</td>
-                                                                    <td className="p-4 font-mono text-xs">{String(inv.meta?.posted ?? '')}</td>
-                                                                    <td className="p-4 text-right">{formatCurrency(inv.meta?.balance_mn)}</td>
-                                                                    <td className="p-4 text-right font-bold">{formatCurrency(inv.meta?.new_balance_mn)}</td>
-                                                                    <td className="p-4 whitespace-nowrap">{String(inv.meta?.due_date ?? '')}</td>
-                                                                    <td className="p-4 text-center font-bold text-xs">{String(inv.meta?.currency_code ?? '')}</td>
-                                                                    <td className="p-4 font-mono text-xs">{String(inv.meta?.openpayable ?? '')}</td>
-                                                                    <td className="p-4 text-xs">{String(inv.meta?.description_tran_doc_type ?? '')}</td>
-                                                                    <td className="p-4 font-mono text-[10px] text-slate-500">{String(inv.meta?.transac_ref_c ?? '')}</td>
-                                                                    <td className="p-4 font-mono text-[10px] text-slate-500">{String(inv.meta?.transac_num_c ?? '')}</td>
-                                                                    <td className="p-4 font-mono text-[10px] text-slate-400">{String(inv.uuid ?? '')}</td>
-                                                                    <td className="p-4 text-center">{String(inv.meta?.tar_code ?? '')}</td>
-                                                                    <td className={`p-4 text-center font-semibold ${inv.meta?.isHoldInvoice ? 'text-red-600 bg-red-50' : ''}`}>
-                                                                        {String(inv.meta?.holdinvoice ?? '')}
-                                                                    </td>
-                                                                    <td className={`p-4 text-center font-semibold ${inv.meta?.isHoldPayment ? 'text-red-600 bg-red-50' : ''}`}>
-                                                                        {String(inv.meta?.hold_payments ?? '')}
-                                                                    </td>
-                                                                    <td className="p-4 text-xs italic text-slate-500 max-w-xs truncate" title={String(inv.meta?.msgholdpayment_c ?? '')}>
-                                                                        {String(inv.meta?.msgholdpayment_c ?? '')}
-                                                                    </td>
-                                                                    <td className="p-4 text-center sticky right-0 bg-white group-hover:bg-slate-50 min-w-[180px]">
-                                                                        {isProposal ? (
-                                                                            inv._status === 'authorized' ? (
-                                                                                <div className="flex flex-col items-center gap-1">
-                                                                                    <Badge status="success">AUTORIZADO</Badge>
-                                                                                    {!isLocked && (
-                                                                                        <div className="flex gap-1">
-                                                                                            <button onClick={() => handleRevoke([inv])} className="text-blue-500 hover:bg-blue-50 p-1 rounded text-[10px] font-bold" title="Editar / Volver a Pendiente">EDITAR</button>
-                                                                                            <button onClick={() => handleReject([inv])} className="text-red-500 hover:bg-red-50 p-1 rounded" title="Rechazar"><X size={14} /></button>
-                                                                                        </div>
-                                                                                    )}
-                                                                                </div>
-                                                                            ) : (
-                                                                                <div className="flex items-center justify-center gap-2">
-                                                                                    {!isLocked ? (
-                                                                                        <>
-                                                                                            <button onClick={() => handleAuthorize([inv])} className="text-emerald-500 hover:bg-emerald-50 p-1.5 rounded" title="Autorizar Factura"><CheckCircle2 size={16} /></button>
-                                                                                            <button
-                                                                                                onClick={() => handleReject([inv])}
-                                                                                                className="text-slate-400 hover:text-red-500 p-1.5 rounded hover:bg-red-50"
-                                                                                                title="No autorizar"
-                                                                                            >
-                                                                                                <X size={16} />
-                                                                                            </button>
-                                                                                        </>
-                                                                                    ) : (
-                                                                                        <span className="text-[10px] text-slate-400 italic">Pendiente</span>
-                                                                                    )}
-                                                                                </div>
-                                                                            )
-                                                                        ) : (
-                                                                            <div className="flex items-center justify-center">
-                                                                                <Badge status="success">AUTORIZADO</Badge>
-                                                                            </div>
-                                                                        )}
-                                                                    </td>
+                                            return currentList.map((item, idx) => (
+                                                <div key={idx} className="bg-white border border-slate-200 p-4 rounded-xl shadow-sm hover:shadow-md transition-all cursor-pointer flex items-center justify-between" onClick={() => { if (drillLevel === 1) { setSelectedCompany(item); setDrillLevel(2); } else if (drillLevel === 2) { setSelectedGroup(item); setDrillLevel(3); } else { setSelectedProvider(item); setDrillLevel(4); } }}>
+                                                    <div className="flex items-center gap-4">
+                                                        <div className={`h-10 w-10 rounded-lg flex items-center justify-center text-white ${drillLevel === 1 ? 'bg-indigo-500' : drillLevel === 2 ? 'bg-emerald-500' : 'bg-amber-500'}`}><Briefcase size={20} /></div>
+                                                        <div><h4 className="font-bold text-slate-800">{item.name}</h4><p className="text-xs text-slate-500">{(item.items || []).length || (item.invoices || []).length} elementos</p></div>
+                                                    </div>
+                                                    <div className="text-right flex items-center gap-4">
+                                                        <div><p className="font-bold text-lg text-slate-800">{formatCurrency(item.amount)}</p></div>
+                                                        <ChevronRight size={18} className="text-slate-300" />
+                                                    </div>
+                                                </div>
+                                            ));
+                                        })()}
+                                    </div>
+                                </div>
+                            )}
+                            {drillLevel === 4 && selectedProvider && (
+                                (() => {
+                                    const { fiscal, nonFiscal } = getSegmentedInvoices(selectedProvider);
+                                    // Filtros locales de facturas (fiscal y no-fiscal)
+                                    const filteredFiscal = fiscal.filter(inv =>
+                                        invoiceSearch === '' ||
+                                        String(inv.meta?.invoice || '').toLowerCase().includes(invoiceSearch.toLowerCase()) ||
+                                        String(inv.uuid || '').toLowerCase().includes(invoiceSearch.toLowerCase())
+                                    );
+                                    const filteredNonFiscal = nonFiscal.filter(inv =>
+                                        invoiceSearch === '' ||
+                                        String(inv.meta?.invoice || '').toLowerCase().includes(invoiceSearch.toLowerCase()) ||
+                                        String(inv.uuid || '').toLowerCase().includes(invoiceSearch.toLowerCase())
+                                    );
+
+                                    return (
+                                        <div className="space-y-8 animate-fade-in pb-12 max-w-7xl mx-auto">
+                                            {/* SECCIÓN FISCALES */}
+                                            <div className="space-y-3">
+                                                <div className="flex justify-between items-center mb-2">
+                                                    <div className="flex items-center gap-2 cursor-pointer" onClick={() => setIsFiscalExpanded(!isFiscalExpanded)}>
+                                                        <div className="bg-emerald-100 text-emerald-700 p-1.5 rounded-lg"><FileText size={18} /></div>
+                                                        <h3 className="font-bold text-slate-700">Facturas Fiscales (UUID)</h3>
+                                                        {isFiscalExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                                                    </div>
+                                                    <div className="relative w-64">
+                                                        <Search size={14} className="absolute left-3 top-2.5 text-slate-400" />
+                                                        <input type="text" placeholder="Buscar factura o UUID..." className="w-full pl-9 pr-3 py-2 text-xs border border-slate-200 rounded-lg outline-none" value={invoiceSearch} onChange={(e) => setInvoiceSearch(e.target.value)} />
+                                                    </div>
+                                                </div>
+
+                                                {isFiscalExpanded && (
+                                                    <div className="bg-white border border-emerald-100 rounded-xl overflow-hidden shadow-sm">
+                                                        <table className="w-full text-left text-xs">
+                                                            <thead className="bg-emerald-50/50 text-slate-600 font-bold uppercase">
+                                                                <tr>
+                                                                    <th className="p-4">Factura</th>
+                                                                    <th className="p-4">UUID (Folio Fiscal)</th>
+                                                                    <th className="p-4 text-right">Monto</th>
+                                                                    <th className="p-4 text-center">Acción</th>
                                                                 </tr>
-                                                            ))}
-                                                        </tbody>
-                                                    </table>
-                                                </div>
-
-                                                {/* Controles de Paginación */}
-                                                {totalPages > 1 && (
-                                                    <div className="flex items-center justify-between p-3 border-t border-slate-100 bg-slate-50">
-                                                        <button
-                                                            onClick={() => setInvoicePage(p => Math.max(1, p - 1))}
-                                                            disabled={invoicePage === 1}
-                                                            className="p-1 rounded hover:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                                                        >
-                                                            <ChevronLeft size={20} className="text-slate-500" />
-                                                        </button>
-                                                        <span className="text-xs text-slate-500 font-medium">
-                                                            Página {invoicePage} de {totalPages}
-                                                        </span>
-                                                        <button
-                                                            onClick={() => setInvoicePage(p => Math.min(totalPages, p + 1))}
-                                                            disabled={invoicePage === totalPages}
-                                                            className="p-1 rounded hover:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                                                        >
-                                                            <ChevronRight size={20} className="text-slate-500" />
-                                                        </button>
+                                                            </thead>
+                                                            <tbody className="divide-y divide-emerald-50">
+                                                                {filteredFiscal.map(inv => (
+                                                                    <tr key={inv.id} className="hover:bg-slate-50">
+                                                                        <td className="p-4 font-bold text-slate-700">
+                                                                            <div className="flex items-center gap-2">
+                                                                                {inv.meta?.invoice}
+                                                                                {inv.meta?.isH2H && <span className="bg-indigo-600 text-white text-[9px] px-1.5 py-0.5 rounded-sm font-black shadow-sm uppercase">H2H</span>}
+                                                                                {inv.meta?.isKissflow && <span className="bg-purple-600 text-white text-[9px] px-1.5 py-0.5 rounded-sm font-black shadow-sm uppercase">KISSFLOW</span>}
+                                                                            </div>
+                                                                        </td>
+                                                                        <td className="p-4 font-mono text-slate-400">{inv.uuid}</td>
+                                                                        <td className="p-4 text-right font-bold">{formatCurrency(inv.amount)}</td>
+                                                                        <td className="p-4 text-center">
+                                                                            <div className="flex justify-center gap-2">
+                                                                                {isAuthorized ? (
+                                                                                    <button onClick={() => handlePayInvoices([inv])} className="flex items-center gap-1 px-3 py-1 bg-emerald-600 text-white text-[9px] font-black rounded hover:bg-emerald-700 transition-all shadow-sm uppercase tracking-tighter">
+                                                                                        <DollarSign size={12} /> PAGAR
+                                                                                    </button>
+                                                                                ) : inv._status === 'authorized' ? (
+                                                                                    <Badge status="success">AUTORIZADO</Badge>
+                                                                                ) : (
+                                                                                    <>
+                                                                                        <button onClick={() => handleAuthorize([inv])} className="p-1.5 bg-emerald-50 text-emerald-600 rounded-md hover:bg-emerald-600 hover:text-white transition-colors"><CheckCircle2 size={14} /></button>
+                                                                                        <button onClick={() => handleReject([inv])} className="p-1.5 bg-red-50 text-red-600 rounded-md hover:bg-red-600 hover:text-white transition-colors"><X size={14} /></button>
+                                                                                    </>
+                                                                                )}
+                                                                            </div>
+                                                                        </td>
+                                                                    </tr>
+                                                                ))}
+                                                            </tbody>
+                                                        </table>
                                                     </div>
                                                 )}
                                             </div>
-                                        ) : (
-                                            <div className="text-sm text-slate-400 italic p-8 text-center border border-dashed rounded-xl bg-slate-50">
-                                                {invoiceSearch ? 'No se encontraron facturas con ese criterio.' : 'No hay facturas fiscales disponibles.'}
-                                            </div>
-                                        ))}
-                                    </div>
 
-                                    {/* Sección NO Fiscales */}
-                                    <div className="space-y-3">
-                                        <div
-                                            className="flex items-center gap-2 mb-2 pt-4 border-t border-dashed border-slate-200 cursor-pointer group hover:opacity-80 transition-opacity"
-                                            onClick={() => setIsNonFiscalExpanded(!isNonFiscalExpanded)}
-                                        >
-                                            <div className="bg-amber-100 text-amber-700 p-1.5 rounded-lg"><ShieldAlert size={18} /></div>
-                                            <h3 className="font-bold text-slate-700">No Fiscales / Anticipos (TAR Code)</h3>
-                                            <span className="bg-slate-100 text-slate-600 text-xs px-2 py-0.5 rounded-full font-bold">{nonFiscal.length}</span>
-                                            {isNonFiscalExpanded ? <ChevronUp size={16} className="text-slate-400" /> : <ChevronDown size={16} className="text-slate-400" />}
-                                        </div>
-
-                                        {isNonFiscalExpanded && (nonFiscal.length > 0 ? (
-                                            <div className="bg-white border border-amber-100 rounded-xl overflow-hidden shadow-sm">
-                                                <div className="overflow-x-auto">
-                                                    <table className="w-full text-left border-collapse min-w-[1600px]">
-                                                        <thead className="bg-amber-50/50">
-                                                            <tr className="text-xs uppercase text-slate-600 font-bold tracking-wider">
-                                                                {[
-                                                                    { label: 'Invoice', key: 'invoice' },
-                                                                    { label: 'Posted', key: 'posted' },
-                                                                    { label: 'Balance mn', key: 'balance_mn', align: 'right' },
-                                                                    { label: 'New Balance MN', key: 'new_balance_mn', align: 'right' },
-                                                                    { label: 'Due date', key: 'due_date' },
-                                                                    { label: 'Currency code', key: 'currency_code', align: 'center' },
-                                                                    { label: 'Open payable', key: 'openpayable' },
-                                                                    { label: 'Description Tran Doc Type', key: 'description_tran_doc_type' },
-                                                                    { label: 'Transac_ref_c', key: 'transac_ref_c' },
-                                                                    { label: 'Transac_num_c', key: 'transac_num_c' },
-                                                                    { label: 'Fiscal Folio', key: 'uuid' },
-                                                                    { label: 'TAR Code', key: 'tar_code', align: 'center' },
-                                                                    { label: 'HoldInvoice', key: 'holdinvoice', align: 'center' },
-                                                                    { label: 'Hold Payments', key: 'hold_payments', align: 'center' },
-                                                                    { label: 'MsgHoldPayment_c', key: 'msgholdpayment_c' }
-                                                                ].map((col) => (
-                                                                    <th
-                                                                        key={col.key}
-                                                                        className={`p-4 whitespace-nowrap cursor-pointer hover:bg-amber-100/50 transition-colors ${col.align === 'right' ? 'text-right' : col.align === 'center' ? 'text-center' : ''}`}
-                                                                        onClick={() => {
-                                                                            const dir = sortConfig.key === col.key && sortConfig.direction === 'asc' ? 'desc' : 'asc';
-                                                                            setSortConfig({ key: col.key, direction: dir });
-                                                                        }}
-                                                                    >
-                                                                        <div className={`flex items-center gap-1 ${col.align === 'right' ? 'justify-end' : col.align === 'center' ? 'justify-center' : ''}`}>
-                                                                            {col.label}
-                                                                            <ArrowUpDown size={12} className={sortConfig.key === col.key ? 'text-primary' : 'text-slate-300'} />
-                                                                        </div>
-                                                                    </th>
-                                                                ))}
-                                                                <th className="p-4 text-center sticky right-0 bg-amber-50/50">Acción</th>
-                                                            </tr>
-                                                        </thead>
-                                                        <tbody className="divide-y divide-amber-50 text-sm">
-                                                            {sortedNonFiscal.map(inv => (
-                                                                <tr key={inv.id} className={`hover:bg-slate-50 transition-colors ${isRejected ? 'bg-red-50/60' : ''}`}>
-                                                                    <td className="p-4 font-medium text-slate-700">{String(inv.meta?.invoice ?? '')}</td>
-                                                                    <td className="p-4 font-mono text-xs">{String(inv.meta?.posted ?? '')}</td>
-                                                                    <td className="p-4 text-right">{formatCurrency(inv.meta?.balance_mn)}</td>
-                                                                    <td className="p-4 text-right font-bold">{formatCurrency(inv.meta?.new_balance_mn)}</td>
-                                                                    <td className="p-4 whitespace-nowrap">{String(inv.meta?.due_date ?? '')}</td>
-                                                                    <td className="p-4 text-center font-bold text-xs">{String(inv.meta?.currency_code ?? '')}</td>
-                                                                    <td className="p-4 font-mono text-xs">{String(inv.meta?.openpayable ?? '')}</td>
-                                                                    <td className="p-4 text-xs">{String(inv.meta?.description_tran_doc_type ?? '')}</td>
-                                                                    <td className="p-4 font-mono text-[10px] text-slate-500">{String(inv.meta?.transac_ref_c ?? '')}</td>
-                                                                    <td className="p-4 font-mono text-[10px] text-slate-500">{String(inv.meta?.transac_num_c ?? '')}</td>
-                                                                    <td className="p-4 font-mono text-[10px] text-slate-400">{String(inv.uuid ?? '')}</td>
-                                                                    <td className="p-4 text-center">{String(inv.meta?.tar_code ?? '')}</td>
-                                                                    <td className={`p-4 text-center font-semibold ${inv.meta?.isHoldInvoice ? 'text-red-600 bg-red-50' : ''}`}>
-                                                                        {String(inv.meta?.holdinvoice ?? '')}
-                                                                    </td>
-                                                                    <td className={`p-4 text-center font-semibold ${inv.meta?.isHoldPayment ? 'text-red-600 bg-red-50' : ''}`}>
-                                                                        {String(inv.meta?.hold_payments ?? '')}
-                                                                    </td>
-                                                                    <td className="p-4 text-xs italic text-slate-500 max-w-xs truncate" title={String(inv.meta?.msgholdpayment_c ?? '')}>
-                                                                        {String(inv.meta?.msgholdpayment_c ?? '')}
-                                                                    </td>
-                                                                    <td className="p-4 text-center sticky right-0 bg-white group-hover:bg-slate-50">
-                                                                        <button onClick={() => handleExclude(inv.id)} className="text-slate-400 hover:text-red-500 p-1 rounded hover:bg-red-50"><X size={16} /></button>
-                                                                    </td>
-                                                                </tr>
-                                                            ))}
-                                                        </tbody>
-                                                    </table>
+                                            {/* SECCIÓN NO FISCALES */}
+                                            <div className="space-y-3">
+                                                <div className="flex justify-between items-center mb-2">
+                                                    <div className="flex items-center gap-2 cursor-pointer" onClick={() => setIsNonFiscalExpanded(!isNonFiscalExpanded)}>
+                                                        <div className="bg-amber-100 text-amber-700 p-1.5 rounded-lg"><FileText size={18} /></div>
+                                                        <h3 className="font-bold text-slate-700">Facturas No Fiscales (Sin UUID)</h3>
+                                                        <span className="text-xs font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100">{filteredNonFiscal.length}</span>
+                                                        {isNonFiscalExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                                                    </div>
                                                 </div>
+
+                                                {isNonFiscalExpanded && (
+                                                    <div className="bg-white border border-amber-100 rounded-xl overflow-hidden shadow-sm">
+                                                        {filteredNonFiscal.length === 0 ? (
+                                                            <p className="p-6 text-center text-slate-400 italic text-sm">Sin facturas no-fiscales para este proveedor.</p>
+                                                        ) : (
+                                                            <table className="w-full text-left text-xs">
+                                                                <thead className="bg-amber-50/50 text-slate-600 font-bold uppercase">
+                                                                    <tr>
+                                                                        <th className="p-4">Factura</th>
+                                                                        <th className="p-4">Observación</th>
+                                                                        <th className="p-4 text-right">Monto</th>
+                                                                        <th className="p-4 text-center">Acción</th>
+                                                                    </tr>
+                                                                </thead>
+                                                                <tbody className="divide-y divide-amber-50">
+                                                                    {filteredNonFiscal.map(inv => (
+                                                                        <tr key={inv.id} className="hover:bg-slate-50">
+                                                                            <td className="p-4 font-bold text-slate-700">
+                                                                                <div className="flex items-center gap-2">
+                                                                                    {inv.meta?.invoice}
+                                                                                    {inv.meta?.isKissflow && <span className="bg-purple-600 text-white text-[9px] px-1.5 py-0.5 rounded-sm font-black shadow-sm uppercase">KISSFLOW</span>}
+                                                                                </div>
+                                                                            </td>
+                                                                            <td className="p-4 text-amber-700 text-xs font-medium">
+                                                                                {inv.meta?.validationErrors?.[0] || 'Sin UUID / No fiscal'}
+                                                                            </td>
+                                                                            <td className="p-4 text-right font-bold">{formatCurrency(inv.amount)}</td>
+                                                                            <td className="p-4 text-center">
+                                                                                <div className="flex justify-center gap-2">
+                                                                                    {isAuthorized ? (
+                                                                                        <button onClick={() => handlePayInvoices([inv])} className="flex items-center gap-1 px-3 py-1 bg-emerald-600 text-white text-[9px] font-black rounded hover:bg-emerald-700 transition-all shadow-sm uppercase tracking-tighter">
+                                                                                            <DollarSign size={12} /> PAGAR
+                                                                                        </button>
+                                                                                    ) : inv._status === 'authorized' ? (
+                                                                                        <Badge status="success">AUTORIZADO</Badge>
+                                                                                    ) : (
+                                                                                        <>
+                                                                                            <button onClick={() => handleAuthorize([inv])} className="p-1.5 bg-emerald-50 text-emerald-600 rounded-md hover:bg-emerald-600 hover:text-white transition-colors" title="Autorizar"><CheckCircle2 size={14} /></button>
+                                                                                            <button onClick={() => handleReject([inv])} className="p-1.5 bg-red-50 text-red-600 rounded-md hover:bg-red-600 hover:text-white transition-colors" title="Rechazar"><X size={14} /></button>
+                                                                                        </>
+                                                                                    )}
+                                                                                </div>
+                                                                            </td>
+                                                                        </tr>
+                                                                    ))}
+                                                                </tbody>
+                                                            </table>
+                                                        )}
+                                                    </div>
+                                                )}
                                             </div>
-                                        ) : (
-                                            <div className="text-sm text-slate-400 italic p-4 border border-dashed rounded-xl">No hay registros no fiscales.</div>
-                                        ))}
-                                    </div>
-                                </div>
-                            );
-                        })()
-                    )}
-                </div>
+
+                                            <div className="text-center mt-4">
+                                                <Button variant="secondary" size="sm" onClick={goBack}>Regresar a la lista</Button>
+                                            </div>
+                                        </div>
+                                    );
+                                })()
+                            )}
+                        </div>
+                    </>
+                )}
             </div>
 
-            {/* Modal para Agregar Facturas desde ERP */}
-            <Modal
-                isOpen={isAddModalOpen}
-                onClose={() => setIsAddModalOpen(false)}
-                title="Búsqueda de Facturas en ERP"
-                size="md"
-            >
-                <div className="space-y-6">
-                    <p className="text-sm text-slate-500">
-                        Busca código UUID en el catálogo central (ERP simulado) para agregarlo directamente a la propuesta actual de pago.
-                    </p>
+            {/* Modales */}
+            {showGroupsView && <Modal isOpen={true} onClose={() => setShowGroupsView(false)} title="LISTA DE GRUPOS DE PROVEEDOR" size="lg">
+                <div className="p-4">
+                    <div className="flex justify-between items-center mb-4">
+                        <p className="text-sm text-slate-500">Resumen de dispersión segmentado.</p>
+                        <div className="relative w-64">
+                            <Search size={14} className="absolute left-3 top-2.5 text-slate-400" />
+                            <input type="text" placeholder="Buscar en el lote..." className="w-full pl-9 pr-3 py-2 text-xs border border-slate-200 rounded-lg" value={groupSearchTerm} onChange={(e) => setGroupSearchTerm(e.target.value)} />
+                        </div>
+                    </div>
+                    <div className="space-y-3">
+                        {processedGroups.h2h.concat(processedGroups.general).map((group, idx) => renderProviderAccordion(group, idx))}
+                    </div>
+                </div>
+            </Modal>}
+            {/* Modal: Búsqueda de facturas en ERP */}
+            <Modal isOpen={isAddModalOpen} onClose={() => { setIsAddModalOpen(false); setSearchUuid(''); setSearchResult(null); }} title="Búsqueda de Facturas en ERP" size="md">
+                <div className="p-6 space-y-4">
+                    <p className="text-xs text-slate-500">Ingresa el UUID del folio fiscal para buscarlo en las facturas disponibles del ERP.</p>
                     <div className="flex gap-2">
                         <input
                             type="text"
-                            className="flex-1 p-3 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-primary"
-                            placeholder="Ej. UUID-9A8B7C"
+                            placeholder="UUID — folio fiscal CFDI..."
+                            className="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-primary/20"
                             value={searchUuid}
                             onChange={(e) => setSearchUuid(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && handleSearchInvoice()}
                         />
                         <Button variant="primary" icon={Search} onClick={handleSearchInvoice}>Buscar</Button>
                     </div>
-
-                    {searchResult && (
-                        <Card className="bg-blue-50/50 border-blue-100">
-                            <h4 className="font-bold text-slate-800 mb-4 text-sm uppercase tracking-wider">Resultado Encontrado</h4>
-                            <div className="grid grid-cols-2 gap-4 text-sm">
-                                <div>
-                                    <p className="text-slate-500">Proveedor</p>
-                                    <p className="font-semibold text-slate-800">{searchResult.providerName}</p>
-                                </div>
-                                <div>
-                                    <p className="text-slate-500">Monto</p>
-                                    <p className="font-bold text-primary">{formatCurrency(searchResult.amount)}</p>
-                                </div>
-                                <div>
-                                    <p className="text-slate-500">Cta. de Fondo</p>
-                                    <p className="font-medium text-slate-800">{searchResult.bank} ({searchResult.account})</p>
-                                </div>
-                            </div>
-                            <div className="mt-6 flex justify-end">
-                                <Button variant="success" icon={CheckCircle2} onClick={handleAddFoundInvoice}>
-                                    Agrupar a Propuesta
-                                </Button>
-                            </div>
-                        </Card>
+                    {searchResult ? (
+                        <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-lg space-y-2">
+                            <p className="text-xs font-bold text-emerald-700 uppercase">Factura encontrada</p>
+                            <p className="font-bold text-slate-800">{searchResult.providerName}</p>
+                            <p className="text-xs text-slate-500 font-mono">{searchResult.uuid}</p>
+                            <p className="font-bold text-lg text-slate-700">{formatCurrency(searchResult.amount || 0)}</p>
+                            <Button variant="success" icon={Plus} className="w-full justify-center" onClick={handleAddFoundInvoice}>
+                                Agregar a la Propuesta
+                            </Button>
+                        </div>
+                    ) : (
+                        <div className="p-4 bg-slate-50 border border-dashed border-slate-200 rounded-lg text-center text-slate-400 text-sm">
+                            Los resultados aparecerán aquí
+                        </div>
                     )}
                 </div>
             </Modal>
 
-            {/* Modal Reasignar Cuenta (JSON #20) */}
+            {/* Modal: Reasignación de banco */}
             <Modal isOpen={isReassignModalOpen} onClose={() => setIsReassignModalOpen(false)} title="Reasignar Saldo de Banco" size="sm">
-                <div className="space-y-4">
-                    <div className="bg-amber-50 text-amber-800 p-4 rounded-lg flex gap-3 text-sm">
-                        <AlertTriangle size={20} className="shrink-0" />
-                        <p>Estás a punto de mover todas las facturas de <b>{reassignSourceBank?.name}</b> a otra cuenta. Esta acción actualizará los saldos globales.</p>
-                    </div>
+                <div className="p-6 space-y-4">
+                    {reassignSourceBank && (
+                        <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 text-sm">
+                            <p className="text-xs text-slate-400 uppercase font-bold mb-1">Cuenta Origen</p>
+                            <p className="font-bold text-slate-700">{reassignSourceBank.description}</p>
+                            <p className="text-slate-500 font-mono text-xs">{reassignSourceBank.account}</p>
+                        </div>
+                    )}
                     <div>
-                        <label className="block text-sm font-bold text-slate-700 mb-2">Seleccionar Banco Destino</label>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Cuenta Destino</label>
                         <select
-                            className="w-full p-3 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-primary"
+                            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-primary/20 bg-white"
                             value={reassignTargetBank}
                             onChange={(e) => setReassignTargetBank(e.target.value)}
                         >
-                            <option value="">-- Seleccionar --</option>
-                            {(CATALOG_BANCOS || []).filter(b => b.id !== reassignSourceBank?.id).map(b => <option key={b.id} value={b.id}>{b.bank} ({b.currency_code})</option>)}
+                            <option value="">— Selecciona una cuenta —</option>
+                            {CATALOG_BANCOS
+                                .filter(b => b.id !== reassignSourceBank?.id)
+                                .map(b => (
+                                    <option key={b.id} value={b.id}>{b.bank} ({b.currency_code})</option>
+                                ))
+                            }
                         </select>
                     </div>
-                    <div className="flex justify-end pt-2"><Button variant="primary" icon={ArrowRightLeft} onClick={handleConfirmReassign}>Confirmar Reasignación</Button></div>
+                    <Button variant="primary" className="w-full justify-center" onClick={handleConfirmReassign}>
+                        Confirmar Reasignación
+                    </Button>
                 </div>
             </Modal>
-
-        </div >
+        </div>
     );
 };
 

@@ -43,6 +43,10 @@ export const sp_is_valid_uuid = (val) => {
  * Simula el procesamiento de una fila de factura como un procedimiento almacenado.
  */
 export const sp_process_invoice_data = (data) => {
+    // Lista de errores y advertencias detectados (Reglas de Negocio Epicor)
+    const validationErrors = []; // Bloqueantes (406)
+    const validationWarnings = []; // Informativos (202)
+
     // 1. Determinación de Moneda y Monto
     const currency = data.currency_code?.trim().toUpperCase() || 'MXN';
     const rawAmount = currency === 'USD' ? data.balance_usd : data.balance_mn;
@@ -65,10 +69,40 @@ export const sp_process_invoice_data = (data) => {
     const uuidSource = data.mxfiscalfolio || data.fiscal_folio;
     const hasValidUUID = sp_is_valid_uuid(uuidSource);
 
+    // --- VALIDACIÓN DE REGLAS DE NEGOCIO (AP_InvoiceEntry / AP_PaymentEntry) ---
+
+    // Regla 0_2: Versión CFDI (Solo 4.0 en Facturación)
+    if (String(data.version_cfdi) === '3.3') validationErrors.push("Regla0_2: Solo se acepta CFDI 4.0");
+
+    // Regla 0_4: Estado SAT
+    // Priorizamos la nueva columna 'estado:cfdi' sobre 'sat_status'
+    const currentSatStatus = String(data["estado:cfdi"] || data.sat_status || 'VIGENTE').trim().toUpperCase();
+    if (currentSatStatus !== 'VIGENTE') {
+        validationErrors.push(`Regla0_4: UUID con estado ${currentSatStatus} ante el SAT`);
+    }
+
+    // Regla 1_3: Saldo Mayor a Cero
+    if (amount <= 0) validationErrors.push("Regla1_3: El saldo debe ser mayor a cero para programar pago");
+
+    // Regla 2_7 y 2_8: Tipo de Cambio
+    const exRate = parseFloat(data.exchange_rate) || 1;
+    if (currency === 'MXN' && exRate !== 1) validationErrors.push("Regla2_7: Moneda MXN debe tener Tipo de Cambio 1");
+    if (currency === 'USD' && exRate === 1) validationErrors.push("Regla2_8: Moneda USD requiere Tipo de Cambio distinto de 1");
+
+    // Regla 2_6: Comparación de Montos (Epicor vs XML)
+    const xmlTotal = sp_parse_amount(data.xml_total);
+    if (xmlTotal > 0 && Math.abs(xmlTotal - amount) > 0.01) {
+        validationErrors.push("Regla2_6: El total del XML no coincide con el saldo en Epicor");
+    }
+
     // REGLA: Es fiscal solo si tiene UUID y el TarCode NO es 1.
-    const isFiscal = hasValidUUID && !isTarCode;
+    const isFiscal = hasValidUUID && !isTarCode && validationErrors.length === 0;
     // ERROR FISCAL: Inconsistencia entre TAR y UUID.
-    const hasFiscalError = isTarCode && hasValidUUID;
+    const hasFiscalError = (isTarCode && hasValidUUID) || validationErrors.length > 0;
+
+    // 5. Identificación de Origen (H2H / KISSFLOW)
+    const isH2H = sp_parse_boolean(data.member_id);
+    const isKissflow = sp_parse_boolean(data.solicitud_kissflow);
 
     // 5. Determinación de Susceptibilidad a Pago (isPayable)
     const isPayable = isPosted && !isHoldPayment && !hasFiscalError;
@@ -102,7 +136,11 @@ export const sp_process_invoice_data = (data) => {
             isHoldInvoice,
             isFiscal,
             hasFiscalError,
-            isPayable
+            isPayable,
+            validationErrors,
+            validationWarnings,
+            isH2H,
+            isKissflow
         }
     };
 };

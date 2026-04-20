@@ -14,6 +14,10 @@ export const invoiceSchema = z.object({
     banco: z.any().optional(),
     mxfiscalfolio: z.any().optional(), // Aseguramos captura de la columna exacta
 
+    // Nuevas Columnas de Origen
+    member_id: z.any().optional(),
+    solicitud_kissflow: z.any().optional(),
+
     group_proveedor: z.any().optional(),
     description_grupo_proveedor: z.any().optional(),
     subgrupo_c: z.any().optional(),
@@ -66,6 +70,13 @@ export const invoiceSchema = z.object({
     expenseinterface: z.any().optional(),
     transac_ref_c: z.any().optional(),
     transac_num_c: z.any().optional(),
+
+    // Columnas de Simulación de Reglas Epicor
+    version_cfdi: z.any().optional().default('4.0'),
+    sat_status: z.any().optional().default('VIGENTE'),
+    "estado:cfdi": z.any().optional(), // Nueva columna solicitada
+    xml_total: z.any().optional(),
+    xml_retenciones: z.any().optional(),
 
 }).transform((data) => {
     // Invocamos el SP de negocio para procesar los datos

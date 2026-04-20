@@ -1,8 +1,11 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
+
+const API_BASE_URL = 'http://localhost:5000';
 import { Upload, FileSpreadsheet, AlertCircle, CheckCircle2, Save, Trash2, Database } from 'lucide-react';
 import Button from '../components/Button';
 import Card from '../components/Card';
 import { parseExcelFile } from './excelReader';
+import { sp_process_invoice_data } from '../logic/Reglas_Negocio';
 import { invoicesArraySchema } from './invoiceSchema';
 
 const DataLoad = ({ setRawInvoices, setCurrentModule }) => {
@@ -23,11 +26,15 @@ const DataLoad = ({ setRawInvoices, setCurrentModule }) => {
             // 1. Leer Excel
             const rawData = await parseExcelFile(file);
 
-            // 2. Validar con Zod
-            const result = invoicesArraySchema.safeParse(rawData);
+            // 2. Procesar con Reglas de Negocio (Mapeo a estructura interna)
+            // Es vital procesar aquí para generar bankId y meta, de lo contrario no se verán en Pagos V2
+            const processedData = rawData.map(row => sp_process_invoice_data(row));
+
+            // 3. Validar con Zod los datos ya procesados
+            const result = invoicesArraySchema.safeParse(processedData);
 
             if (result.success) {
-                setPreviewData(result.data);
+                setPreviewData(processedData);
             } else { // El mensaje de error ahora es más genérico y útil
                 console.error("Error de validación Zod:", result.error);
 
@@ -54,18 +61,21 @@ const DataLoad = ({ setRawInvoices, setCurrentModule }) => {
 
         try {
             // 1. Petición de Facturas (Excel)
-            const response = await fetch('http://localhost:5000/api/invoices');
+            const response = await fetch(`${API_BASE_URL}/api/invoices`);
             const jsonData = await response.json();
 
             if (!response.ok) {
                 throw new Error(jsonData.error || "Error de conexión con el servidor local.");
             }
 
-            // Validamos igual que si fuera un archivo subido
-            const result = invoicesArraySchema.safeParse(jsonData);
+            // PROCESAMIENTO CRÍTICO: Mapear cada fila del Excel a través de las Reglas de Negocio
+            const processedData = jsonData.map(row => sp_process_invoice_data(row));
+
+            // Validamos los datos ya procesados
+            const result = invoicesArraySchema.safeParse(processedData);
 
             if (result.success) {
-                setPreviewData(result.data);
+                setPreviewData(processedData);
                 setFileName(`Sincronización Local: ${jsonData.length} registros encontrados en disco.`);
             } else {
                 const firstError = result.error.issues[0]?.message || "Error de formato en datos locales";
@@ -74,7 +84,7 @@ const DataLoad = ({ setRawInvoices, setCurrentModule }) => {
         } catch (err) {
             console.error(err);
             if (err instanceof TypeError && err.message.includes('Failed to fetch')) {
-                setError("Error de Conexión: No se pudo contactar al servidor en http://localhost:5000. Asegúrate de que el script 'python server.py' se está ejecutando en una terminal separada y no muestra errores.");
+                setError(`Error de Conexión: No se pudo contactar al servidor en ${API_BASE_URL}. Asegúrate de que el script 'python server.py' se está ejecutando en una terminal separada y no muestra errores.`);
             } else {
                 setError(`Ocurrió un error inesperado: ${err.message}`);
             }
@@ -93,7 +103,7 @@ const DataLoad = ({ setRawInvoices, setCurrentModule }) => {
         setFileName('');
 
         // Redirigir al módulo de pagos para ver los datos
-        if (setCurrentModule) setCurrentModule('payments');
+        if (setCurrentModule) setCurrentModule('payments-v2');
     };
 
     const handleClear = () => {
@@ -171,7 +181,13 @@ const DataLoad = ({ setRawInvoices, setCurrentModule }) => {
                             <tbody className="divide-y divide-slate-100">
                                 {previewData.slice(0, 50).map((r, i) => (
                                     <tr key={i} className="hover:bg-slate-50">
-                                        <td className="p-3 text-slate-500">{r.meta.invoice}</td>
+                                        <td className="p-3 text-slate-500">
+                                            <div className="flex items-center gap-2">
+                                                {r.meta.invoice}
+                                                {r.meta?.isH2H && <span className="bg-indigo-600 text-white text-[9px] px-1.5 py-0.5 rounded-sm font-black shadow-sm ring-1 ring-indigo-700/50 uppercase tracking-tighter">H2H</span>}
+                                                {r.meta?.isKissflow && <span className="bg-purple-600 text-white text-[9px] px-1.5 py-0.5 rounded-sm font-black shadow-sm ring-1 ring-purple-700/50 uppercase tracking-tighter">KISSFLOW</span>}
+                                            </div>
+                                        </td>
                                         <td className="p-3 font-mono text-xs text-slate-400">{r.uuid?.slice(0, 8)}...</td>
                                         <td className="p-3 font-medium text-slate-800">{r.providerName}</td>
                                         <td className="p-3 text-right font-bold text-slate-700">{r.amount.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</td>

@@ -26,8 +26,8 @@ const MainLayout = ({ currentUser, onLogout, children, currentModule, setCurrent
                     currentModuleTitle={currentModuleTitle}
                 />
 
-                <main className="flex-1 overflow-y-auto p-4 md:p-8 relative">
-                    <div className="max-w-7xl mx-auto h-full flex flex-col">
+                <main className="flex-1 overflow-y-auto p-3 relative">
+                    <div className="w-full h-full flex flex-col">
                         {children}
                     </div>
                 </main>

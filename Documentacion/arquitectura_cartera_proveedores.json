@@ -1,0 +1,51 @@
+{
+    "proyecto": "Cartera de Proveedores",
+    "version": "1.1.0",
+    "descripcion": "Solución para la optimización del ciclo de pagos y gestión de propuestas de proveedores.",
+    "diseno_estructural": {
+        "navegacion": "Lateral",
+        "modulos": [
+            {
+                "nombre": "Gestión Pagos V2",
+                "submodulos": []
+            },
+            {
+                "nombre": "Multi Propuestas",
+                "submodulos": []
+            },
+            {
+                "nombre": "Pagos",
+                "submodulos": [
+                    "a) Pagos rechazados",
+                    "b) Pagos Rechazados General"
+                ]
+            },
+            {
+                "nombre": "Reporteria",
+                "submodulos": [
+                    "a) Reporte facturas rechazadas",
+                    "b) Reporte bitacora de cambios",
+                    "c) Reporte de Propuestas autorizadas y pagadas"
+                ]
+            }
+        ]
+    },
+    "arquitectura": {
+        "integracion_erp": "Consumo de API Flask (server.py) procesando fuentes Excel",
+        "procesamiento_lotes": "Generación de Multi Batch con soporte para Consolidación (Merge)",
+        "automatizacion": "Procesamiento jerárquico de 6 niveles (Co > Grupo > Subgrupo > Prov > PP > Doc)",
+        "persistencia": {
+            "filtros": "Guardado automático de filtros de usuario",
+            "almacenamiento": "Guardado local en Base de Datos"
+        }
+    },
+    "funcionalidades_clave": [
+        "Descarga de excel",
+        "Agregar facturas manuales",
+        "Envio automatico de correos",
+        "Linkeo de autorizacion automatica a propuesta con batch generado"
+    ],
+    "infraestructura": {
+        "servidor_alojamiento": "Por definir"
+    }
+}

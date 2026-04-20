@@ -1,0 +1,59 @@
+{
+    "proyecto": {
+        "nombre": "GESTIÓN DE CARTERA PO & CT",
+        "id": "EP-2829",
+        "fecha_inicio": "01.09.2025",
+        "version_documentacion": "1.1.0.0",
+        "estado": "En desarrollo (Fase V2 - Motor de Reglas y MultiBatch activo)"
+    },
+    "vision_estrategica": {
+        "proposito": "Implementar una herramienta robusta para transformar y blindar el proceso de pago a proveedores.",
+        "objetivo_central": "Automatizar el ciclo desde la extracción en Epicor hasta la liquidación final vía H2H/Sin H2H.",
+        "pilares": [
+            "Trazabilidad completa y auditoría simplificada",
+            "Blindaje contra fraude y cumplimiento normativo",
+            "Optimización del flujo de caja e inteligencia de negocio"
+        ]
+    },
+    "equipo_principal_2026": {
+        "product_owner": "Ing. Ernesto Baeza",
+        "scrum_master": "Manuel Chan",
+        "desarrollo_scrum": "Julio Palacios",
+        "proxies_autorizacion": [
+            "Ricky Zarate",
+            "Luis Cosilion"
+        ]
+    },
+    "stakeholders_clave": [
+        {
+            "nombre": "Edgar Ramirez",
+            "rol": "Sponsor"
+        },
+        {
+            "nombre": "Reyna Campos",
+            "rol": "Gerente Tesorería"
+        },
+        {
+            "nombre": "Enrique Enciso",
+            "rol": "Interesado Negocio"
+        }
+    ],
+    "reglas_de_negocio_criticas": {
+        "restricciones_pago": [
+            "No pagar si el estado es 'Cancelado' en catálogo CFDI",
+            "No pagar si presenta estado 'HOLD' en Epicor o automático",
+            "No pagar si tiene Nota de Crédito relacionada no provisionada"
+        ],
+        "controles_flujo": [
+            "Bloquear Apply/Payment/Write-off si la factura está en una propuesta activa",
+            "Validación de usuario mediante Microsoft",
+            "Generación de grupos de pago por proveedor"
+        ]
+    },
+    "acuerdos_tecnicos_recientes": {
+        "gestion_batch": "Implementación de Multi-Batch con lógica de Consolidación (Merge) y Release",
+        "motor_reglas": "Validación automática de Reglas de Negocio Epicor (TAR Codes, UUID, Saldos)",
+        "automatización": "Gestión automática de tiempos de ejecución para armado de propuestas",
+        "seguridad": "Autenticación obligatoria con Microsoft y Log de auditoría"
+    }
+}

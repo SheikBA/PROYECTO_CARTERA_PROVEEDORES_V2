@@ -3,6 +3,18 @@ import { Landmark, ArrowRight } from 'lucide-react';
 import Button from '../components/Button';
 import { APP_VERSION } from '../data/versionHistory';
 
+// Tokens HS según el Design System
+const HS = {
+    tealDark: "#195655",   // hs-teal-8
+    tealBase: "#3bbeb4",   // hs-teal-4
+    blueBase: "#0082a6",   // hs-blue-7
+    orange: "#f79962",     // hs-orange-base
+    white: "#ffffff",
+    gray3: "#b0b0b0",
+    fontTitle: "'Open Sans', sans-serif",
+    fontBody: "'Roboto', sans-serif",
+};
+
 const Login = ({ onLogin }) => {
     const [loading, setLoading] = useState(false);
     const [username, setUsername] = useState('');
@@ -18,7 +30,7 @@ const Login = ({ onLogin }) => {
         setTimeout(() => {
             if (username === 'Vladislav' && password === '1234') {
                 if (onLogin) {
-                    onLogin({ name: 'Vladislav', role: 'Administrador' });
+                    onLogin('Vladislav');
                 }
             } else {
                 setError('Usuario o contraseña incorrectos.');
@@ -29,19 +41,44 @@ const Login = ({ onLogin }) => {
 
     return (
         <div className="min-h-screen bg-slate-50 flex">
-            {/* Sección Izquierda: Imagen / Branding */}
-            <div className="hidden lg:flex flex-1 bg-slate-900 relative items-center justify-center overflow-hidden">
-                <div className="absolute inset-0 bg-gradient-to-br from-blue-900/40 to-slate-900/90 z-10"></div>
-                {/* Imagen de fondo decorativa */}
-                <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?q=80&w=2070&auto=format&fit=crop')] bg-cover bg-center opacity-40 mix-blend-overlay"></div>
+            <style>{`
+                @import url('https://fonts.googleapis.com/css2?family=Open+Sans:wght@300;700&family=Roboto:wght@400;600;700&display=swap');
+                
+                .hs-wordmark-pattern {
+                    background-color: ${HS.tealDark};
+                    background-image: repeating-linear-gradient(
+                        -45deg,
+                        transparent,
+                        transparent 40px,
+                        rgba(255,255,255,0.03) 40px,
+                        rgba(255,255,255,0.03) 41px
+                    );
+                    position: relative;
+                }
+                .hs-wordmark-pattern::after {
+                    content: "hotelshops hotelshops hotelshops";
+                    position: absolute;
+                    font-family: ${HS.fontBody};
+                    font-weight: 300;
+                    color: rgba(255,255,255,0.08);
+                    font-size: 2rem;
+                    transform: rotate(-45deg);
+                    white-space: nowrap;
+                    top: 20%;
+                    left: -10%;
+                    pointer-events: none;
+                }
+            `}</style>
 
-                <div className="relative z-20 text-white p-12 max-w-xl text-center">
+            {/* Sección Izquierda: Branding Corporativo */}
+            <div className="hidden lg:flex flex-1 hs-wordmark-pattern items-center justify-center overflow-hidden">
+                <div className="relative z-20 text-white p-12 max-w-xl text-center" style={{ fontFamily: HS.fontTitle }}>
                     <div className="mx-auto h-24 w-24 bg-white/10 backdrop-blur-md text-white flex items-center justify-center rounded-2xl mb-8 border border-white/20 shadow-2xl">
                         <Landmark size={48} />
                     </div>
-                    <h1 className="text-4xl font-bold mb-4 tracking-tight">Cartera de Proveedores</h1>
-                    <p className="text-lg text-slate-200/90 leading-relaxed">
-                        Sistema integral para la gestión y control de pagos.
+                    <h1 className="text-4xl font-light mb-4 tracking-tight">Cartera de Proveedores</h1>
+                    <p className="text-lg text-slate-200/90 leading-relaxed" style={{ fontFamily: HS.fontBody }}>
+                        Nuestro <span style={{ color: HS.orange, fontWeight: 'bold' }}>ÉXITO</span>, un equipo conformado por <span style={{ color: HS.orange, fontWeight: 'bold' }}>MAGNÍFICOS</span> colaboradores.
                     </p>
                 </div>
             </div>
@@ -64,7 +101,12 @@ const Login = ({ onLogin }) => {
                             {loading ? 'Iniciando...' : 'Iniciar Sesión'}
                         </Button>
                         <div className="text-center pt-2">
-                            <button type="button" className="text-sm text-primary hover:text-blue-700 font-medium hover:underline transition-colors">
+                            <button
+                                type="button"
+                                title="Funcionalidad disponible en la versión con gestión de usuarios"
+                                className="text-sm text-slate-400 font-medium cursor-not-allowed"
+                                disabled
+                            >
                                 Actualizar contraseña
                             </button>
                         </div>
