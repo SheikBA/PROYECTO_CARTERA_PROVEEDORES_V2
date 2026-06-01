@@ -1,15 +1,19 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback, memo } from 'react';
 import { invoicesArraySchema } from '../layout/invoiceSchema';
-import { sp_process_invoice_data } from '../logic/Reglas_Negocio';
 import { DESTINOS, CURRENCIES, HS_TOKENS } from '../data/catalogs';
+import { formatCurrency, formatDate } from '../utils/formatters.js';
+import { validarGrupo } from '../services/ValidationService.js';
+import { fraccionar } from '../services/FraccionamientoService.js';
 import {
     Search, Plus, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Check,
     X, ArrowUpDown, ArrowUp, ArrowDown, Calculator, Users, Download, Eye, ArrowLeft,
-    FileSpreadsheet, ShieldAlert, RefreshCw, CheckCircle2, Lock, Filter, BarChart3, Maximize2, Minimize2, Layers, Save, Landmark
+    FileSpreadsheet, ShieldAlert, RefreshCw, CheckCircle2, Lock, Filter, BarChart3, Maximize2, Minimize2, Layers, Save, Landmark, AlertTriangle, Send
 } from 'lucide-react';
 import Button from '../components/Button';
 import Badge from '../components/Badge';
 import Modal from '../components/Modal';
+
+const API_BASE_URL = 'http://localhost:5000';
 
 // Tokens Hotel Shops
 const HS = {
@@ -18,8 +22,6 @@ const HS = {
     fontTitle: "'Open Sans', sans-serif",
     fontBody: "'Roboto', sans-serif",
 };
-const formatCurrency = (amount, currency = 'MXN') =>
-    new Intl.NumberFormat('es-MX', { style: 'currency', currency }).format(amount || 0);
 
 // Nodo individual del árbol — separado para poder memoizarlo
 const TreeNode = memo(({ id, node, level, selectedNode, onGroupSelect, forceOpen }) => {
@@ -393,6 +395,73 @@ const PaymentsV2 = ({
     const [syncError, setSyncError] = useState(null);
     const [isBatchPanelOpen, setIsBatchPanelOpen] = useState(true);
 
+    // --- BRECHA-02: Validación DLL pre-envío (REQ-008 / INV-006) ---
+    const [validacionModal, setValidacionModal] = useState(null);
+    // validacionModal: { tipo: 'H2H'|'MANUAL', resultado: { aptas, rechazadas, resumen } } | null
+
+    // --- BRECHA-04: Referencias de evento aisladas por factura (INV-002) ---
+    // Map { invoiceId -> { ref1, ref2 } } — no muta el state global rawInvoices
+    const [referenciasEvento, setReferenciasEvento] = useState({});
+
+    const handleReferenciaEvento = (invoiceId, campo, valor) => {
+        setReferenciasEvento(prev => ({
+            ...prev,
+            [invoiceId]: { ...(prev[invoiceId] ?? {}), [campo]: valor },
+        }));
+    };
+
+    // Devuelve la referencia de evento activa o la original de la factura
+    const getRefEvento = (inv, campo) =>
+        referenciasEvento[inv.id]?.[campo] ?? inv[campo] ?? '';
+
+    // --- REQ-008: Disparar validación DLL pre-envío sobre las facturas autorizadas ---
+    const handleProcesarPagos = (tipoProceso) => {
+        const facturas = (authorizedInvoices?.length > 0 ? authorizedInvoices : finalizedInvoices) ?? [];
+        if (facturas.length === 0) {
+            showToast('No hay facturas en la propuesta para procesar.');
+            return;
+        }
+        // Inyectar referencias de evento antes de re-validar
+        const facturasConRef = facturas.map(inv => ({
+            ...inv,
+            ref1: referenciasEvento[inv.id]?.ref1 ?? inv.ref1,
+            ref2: referenciasEvento[inv.id]?.ref2 ?? inv.ref2,
+        }));
+        const resultado = validarGrupo(facturasConRef);
+        setValidacionModal({ tipo: tipoProceso, resultado });
+    };
+
+    // Confirmar envío solo de facturas aptas tras validación
+    const handleConfirmarEnvio = () => {
+        const { aptas, rechazadas, resumen } = validacionModal.resultado;
+        if (rechazadas.length > 0) {
+            // Mover rechazadas a rejectedInvoices
+            if (setFinalizedInvoices) setFinalizedInvoices(prev => (prev ?? []).filter(i => !rechazadas.some(r => r.factura.id === i.id)));
+            if (setAuthorizedInvoices) setAuthorizedInvoices(prev => (prev ?? []).filter(i => !rechazadas.some(r => r.factura.id === i.id)));
+        }
+        setValidacionModal(null);
+        showToast(`${resumen.aptas} factura(s) aprobadas para envío. ${resumen.rechazadas} enviadas a Pagos Rechazados.`);
+    };
+
+    // --- REQ-006: Fraccionamiento por limit_to_pay para vista informativa ---
+    const fraccionesPorProveedor = useMemo(() => {
+        const result = {};
+        const fuente = authorizedInvoices?.length > 0 ? authorizedInvoices : [];
+        const porProveedor = {};
+        fuente.forEach(inv => {
+            const prov = inv.providerName ?? 'Sin Proveedor';
+            if (!porProveedor[prov]) porProveedor[prov] = { facturas: [], limite: inv.meta?.limit_topay_c };
+            porProveedor[prov].facturas.push(inv);
+        });
+        Object.entries(porProveedor).forEach(([prov, data]) => {
+            const limite = parseInt(data.limite, 10);
+            if (limite > 0 && data.facturas.length > limite) {
+                result[prov] = fraccionar(data.facturas, limite);
+            }
+        });
+        return result;
+    }, [authorizedInvoices]);
+
     const handleSyncAndSearch = async () => {
         setIsSyncing(true);
         setSyncError(null);
@@ -400,19 +469,17 @@ const PaymentsV2 = ({
         // 60 segundos: pandas puede tardar en leer archivos Excel grandes
         const timeoutId = setTimeout(() => controller.abort(), 60000);
         try {
-            const response = await fetch('http://localhost:5000/api/invoices', { signal: controller.signal });
+            const response = await fetch(`${API_BASE_URL}/api/invoices`, { signal: controller.signal });
             const jsonData = await response.json();
             if (!response.ok) throw new Error(jsonData.error || "Error de conexión con el servidor.");
 
-            // PROCESAMIENTO CRÍTICO: Transformar datos crudos del Excel a objetos de negocio
-            const processedData = jsonData.map(row => sp_process_invoice_data(row));
-
-            const result = invoicesArraySchema.safeParse(processedData);
+            // Validamos y transformamos usando el esquema (que ya aplica Reglas de Negocio)
+            const result = invoicesArraySchema.safeParse(jsonData);
             if (!result.success) {
                 const firstError = result.error.issues[0]?.message || "Error de formato en datos locales";
                 throw new Error(`Error de validación: ${firstError}`);
             }
-            setRawInvoices(processedData);
+            setRawInvoices(result.data);
             setAppliedFilters({ ...pendingFilters });
             setPage(1);
         } catch (err) {
@@ -1192,6 +1259,24 @@ const PaymentsV2 = ({
                                 </button>
                             )}
 
+                            {/* REQ-008: Botones de procesamiento con validación DLL pre-envío */}
+                            {(authorizedInvoices || []).length > 0 && (<>
+                                <button
+                                    onClick={() => handleProcesarPagos('H2H')}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-black text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors shadow-sm shrink-0"
+                                    title="Validar reglas DLL y procesar vía Host-to-Host"
+                                >
+                                    <Send size={13} /> PROCESAR H2H
+                                </button>
+                                <button
+                                    onClick={() => handleProcesarPagos('MANUAL')}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-black text-slate-700 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-lg transition-colors shadow-sm shrink-0"
+                                    title="Validar reglas DLL para pago manual"
+                                >
+                                    <CheckCircle2 size={13} /> VALIDAR GRUPOS
+                                </button>
+                            </>)}
+
                             {/* Generar batch con facturas autorizadas */}
                             {(authorizedInvoices || []).length > 0 && (
                                 <button onClick={handleFinalizeBatch}
@@ -1240,6 +1325,8 @@ const PaymentsV2 = ({
                                                 </div>
                                             </th>
                                         ))}
+                                        <th className="px-2 py-2.5 text-center w-20" title="Referencia 1 — solo aplica a este evento (INV-002)">REF 1 <span className="text-amber-400">*</span></th>
+                                        <th className="px-2 py-2.5 text-center w-20" title="Referencia 2 — solo aplica a este evento (INV-002)">REF 2 <span className="text-amber-400">*</span></th>
                                         <th className="px-3 py-2.5 text-center w-24 sticky right-0 bg-slate-100 border-l shadow-[-4px_0_10px_rgba(0,0,0,0.05)] z-20">ACCION</th>
                                     </tr>
                                 </thead>
@@ -1270,7 +1357,7 @@ const PaymentsV2 = ({
                                                 <td className="px-3 py-3 text-slate-500 truncate max-w-[140px]" title={inv.meta?.description}>{inv.meta?.description || '—'}</td>
                                                 <td className="px-3 py-3 text-slate-400 italic truncate max-w-[120px]" title={inv.meta?.comments}>{inv.meta?.comments || '—'}</td>
                                                 <td className="px-3 py-3 text-slate-500 whitespace-nowrap">{inv.meta?.invoice_date || '—'}</td>
-                                                <td className="px-3 py-3 text-slate-600 font-bold whitespace-nowrap">{inv.dueDate}</td>
+                                                <td className="px-3 py-3 text-slate-600 font-bold whitespace-nowrap">{formatDate(inv.dueDate)}</td>
                                                 <td className="px-3 py-3 text-slate-400 text-[9px]">{inv.meta?.terms || '—'}</td>
                                                 <td className="px-3 py-3 font-bold text-slate-400">{inv.currency}</td>
                                                 <td className="px-3 py-3 text-right font-black text-slate-800">{formatCurrency(inv.amount, inv.currency)}</td>
@@ -1290,6 +1377,27 @@ const PaymentsV2 = ({
                                                     ) : (
                                                         <Badge status="success" className="text-[8px] py-0">VIGENTE</Badge>
                                                     )}
+                                                </td>
+                                                {/* INV-002: Referencia de evento — aislada, no persiste en Epicor */}
+                                                <td className="px-2 py-2">
+                                                    <input
+                                                        type="text"
+                                                        value={getRefEvento(inv, 'ref1')}
+                                                        onChange={e => handleReferenciaEvento(inv.id, 'ref1', e.target.value)}
+                                                        placeholder={inv.ref1 || '—'}
+                                                        title="Referencia 1 (solo aplica a este evento)"
+                                                        className="w-20 px-1.5 py-0.5 text-[9px] border border-slate-200 rounded outline-none focus:ring-1 focus:ring-primary font-mono bg-yellow-50"
+                                                    />
+                                                </td>
+                                                <td className="px-2 py-2">
+                                                    <input
+                                                        type="text"
+                                                        value={getRefEvento(inv, 'ref2')}
+                                                        onChange={e => handleReferenciaEvento(inv.id, 'ref2', e.target.value)}
+                                                        placeholder={inv.ref2 || '—'}
+                                                        title="Referencia 2 (solo aplica a este evento)"
+                                                        className="w-20 px-1.5 py-0.5 text-[9px] border border-slate-200 rounded outline-none focus:ring-1 focus:ring-primary font-mono bg-yellow-50"
+                                                    />
                                                 </td>
                                                 <td className="px-3 py-3 text-center sticky right-0 bg-white/90 backdrop-blur-sm group-hover:bg-slate-50 transition-colors shadow-[-4px_0_10px_rgba(0,0,0,0.05)] border-l">
                                                     {isAuth ? (
@@ -1327,6 +1435,90 @@ const PaymentsV2 = ({
                         </div>
                     </div>
                 </div>
+
+                {/* Modal de Validación DLL Pre-Envío (REQ-008 / BRECHA-02) */}
+                {validacionModal && (
+                    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-fade-in">
+                        <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 p-6 max-w-lg w-full mx-4">
+                            <div className="flex items-center gap-3 mb-4">
+                                <div className={`p-2 rounded-xl shrink-0 ${validacionModal.resultado.rechazadas.length > 0 ? 'bg-amber-50' : 'bg-emerald-50'}`}>
+                                    {validacionModal.resultado.rechazadas.length > 0
+                                        ? <AlertTriangle size={20} className="text-amber-500" />
+                                        : <CheckCircle2 size={20} className="text-emerald-500" />}
+                                </div>
+                                <div>
+                                    <p className="text-sm font-black text-slate-800 uppercase tracking-tight">
+                                        Validación DLL — Proceso {validacionModal.tipo}
+                                    </p>
+                                    <p className="text-[10px] text-slate-400">Payment Entry + 75 reglas de negocio Epicor</p>
+                                </div>
+                            </div>
+
+                            {/* Resumen */}
+                            <div className="grid grid-cols-3 gap-3 mb-4">
+                                <div className="bg-slate-50 rounded-xl p-3 text-center">
+                                    <p className="text-2xl font-black text-slate-700">{validacionModal.resultado.resumen.total}</p>
+                                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Total</p>
+                                </div>
+                                <div className="bg-emerald-50 rounded-xl p-3 text-center">
+                                    <p className="text-2xl font-black text-emerald-600">{validacionModal.resultado.resumen.aptas}</p>
+                                    <p className="text-[9px] font-black text-emerald-400 uppercase tracking-widest">Aptas</p>
+                                </div>
+                                <div className={`rounded-xl p-3 text-center ${validacionModal.resultado.resumen.rechazadas > 0 ? 'bg-red-50' : 'bg-slate-50'}`}>
+                                    <p className={`text-2xl font-black ${validacionModal.resultado.resumen.rechazadas > 0 ? 'text-red-600' : 'text-slate-300'}`}>
+                                        {validacionModal.resultado.resumen.rechazadas}
+                                    </p>
+                                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Rechazadas</p>
+                                </div>
+                            </div>
+
+                            {/* Detalle de rechazadas */}
+                            {validacionModal.resultado.rechazadas.length > 0 && (
+                                <div className="mb-4 max-h-40 overflow-y-auto space-y-2">
+                                    <p className="text-[9px] font-black text-red-500 uppercase tracking-widest mb-1">Facturas con error — irán a P3 Pagos Rechazados</p>
+                                    {validacionModal.resultado.rechazadas.map(({ factura, errores }) => (
+                                        <div key={factura.id} className="bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+                                            <p className="text-[10px] font-black text-slate-700">{factura.providerName} — {factura.meta?.invoice}</p>
+                                            {errores.map((e, i) => (
+                                                <p key={i} className="text-[9px] text-red-600 leading-tight">· {e}</p>
+                                            ))}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            {/* Fraccionamiento informativo */}
+                            {Object.keys(fraccionesPorProveedor).length > 0 && (
+                                <div className="mb-4 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2">
+                                    <p className="text-[9px] font-black text-blue-500 uppercase tracking-widest mb-1">Fraccionamiento automático (limit_to_pay)</p>
+                                    {Object.entries(fraccionesPorProveedor).map(([prov, subgrupos]) => (
+                                        <p key={prov} className="text-[10px] text-blue-700">
+                                            · {prov}: {subgrupos.length} subgrupo(s) de máx. {subgrupos[0]?.length} factura(s)
+                                        </p>
+                                    ))}
+                                </div>
+                            )}
+
+                            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                                <button
+                                    onClick={() => setValidacionModal(null)}
+                                    className="px-4 py-2 text-xs font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+                                >
+                                    Cancelar
+                                </button>
+                                {validacionModal.resultado.resumen.aptas > 0 && (
+                                    <button
+                                        onClick={handleConfirmarEnvio}
+                                        className="px-4 py-2 text-xs font-black text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors flex items-center gap-1.5"
+                                    >
+                                        <Send size={13} />
+                                        Confirmar {validacionModal.tipo === 'H2H' ? 'envío H2H' : 'pago manual'} ({validacionModal.resultado.resumen.aptas})
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 {/* Toast de notificación */}
                 {toast && (

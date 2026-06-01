@@ -23,11 +23,19 @@ export const HS_TOKENS = {
     gray1: "#e7e7e7"
 };
 
+// Bancos H2H alineados con SDD §6.2 — Banamex, Banorte, Sabadell, Santander
 export const CATALOG_BANCOS_INICIAL = [
-    { id: "BNX-MXN-01", bank: "BANAMEX", bank_account: "1234-5678", currency_code: "MXN", company: "FOTUR", description: "BANAMEX MXN FOTUR" },
-    { id: "SANT-USD-01", bank: "SANTANDER", bank_account: "8888-9999", currency_code: "USD", company: "FOTUR", description: "SANTANDER USD FOTUR" },
-    { id: "BBVA-MXN-01", bank: "BBVA", bank_account: "5555-4444", currency_code: "MXN", company: "HSH", description: "BBVA MXN HSH" },
-    { id: "SCOTI-JMD-01", bank: "SCOTIABANK", bank_account: "1111-2222", currency_code: "JMD", company: "HSH", description: "SCOTIABANK JMD JAMAICA" }
+    { id: "BNX-MXN-01",  bank: "BANAMEX",   bank_account: "1234-5678", currency_code: "MXN", company: "FOTUR", tipo: "H2H",    description: "BANAMEX MXN FOTUR" },
+    { id: "BNX-USD-01",  bank: "BANAMEX",   bank_account: "1234-5679", currency_code: "USD", company: "FOTUR", tipo: "H2H",    description: "BANAMEX USD FOTUR" },
+    { id: "BNRT-MXN-01", bank: "BANORTE",   bank_account: "2345-6789", currency_code: "MXN", company: "FOTUR", tipo: "H2H",    description: "BANORTE MXN FOTUR" },
+    { id: "SABD-MXN-01", bank: "SABADELL",  bank_account: "3456-7890", currency_code: "MXN", company: "FOTUR", tipo: "H2H",    description: "SABADELL MXN FOTUR" },
+    { id: "SANT-MXN-01", bank: "SANTANDER", bank_account: "4567-8901", currency_code: "MXN", company: "FOTUR", tipo: "H2H",    description: "SANTANDER MXN FOTUR" },
+    { id: "SANT-USD-01", bank: "SANTANDER", bank_account: "4567-8902", currency_code: "USD", company: "FOTUR", tipo: "H2H",    description: "SANTANDER USD FOTUR" },
+    { id: "BNX-MXN-02",  bank: "BANAMEX",   bank_account: "5678-9012", currency_code: "MXN", company: "HSH",   tipo: "H2H",    description: "BANAMEX MXN HSH" },
+    { id: "BNRT-MXN-02", bank: "BANORTE",   bank_account: "6789-0123", currency_code: "MXN", company: "HSH",   tipo: "H2H",    description: "BANORTE MXN HSH" },
+    { id: "LOC-DO-01",   bank: "BANCA LOCAL DO", bank_account: "0001", currency_code: "DOP", company: "HSH",   tipo: "MANUAL", description: "Banca local Dominicana" },
+    { id: "LOC-JM-01",   bank: "BANCA LOCAL JM", bank_account: "0002", currency_code: "JMD", company: "HSH",   tipo: "MANUAL", description: "Banca local Jamaica" },
+    { id: "LOC-GD-01",   bank: "BANCA LOCAL GD", bank_account: "0003", currency_code: "XCD", company: "HSH",   tipo: "MANUAL", description: "Banca local Granada" },
 ];
 
 export const CATALOG_COMPANIAS_INICIAL = [

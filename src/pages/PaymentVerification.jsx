@@ -8,6 +8,7 @@ import Button from '../components/Button';
 import Card from '../components/Card';
 import Badge from '../components/Badge';
 import Modal from '../components/Modal';
+import { formatCurrency } from '../utils/formatters.js';
 
 const HS = {
     tealDark: '#195655',
@@ -20,10 +21,6 @@ const PaymentVerification = ({ trackingData = [], setTrackingData }) => {
     const [isLoaderOpen, setIsLoaderOpen] = useState(false);
     const [currentStep, setCurrentStep] = useState(0);
     const [processingInvoice, setProcessingInvoice] = useState(null);
-
-    // Formateo de moneda
-    const formatCurrency = (amount, currency = 'MXN') =>
-        new Intl.NumberFormat('es-MX', { style: 'currency', currency }).format(amount || 0);
 
     // --- BLOQUE 2: LÓGICA DE KPIs ---
     const kpis = useMemo(() => {

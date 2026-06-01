@@ -12,13 +12,7 @@ const HS = {
     tealDark: '#195655',
 };
 
-const formatCurrency = (amount, currency = 'MXN') =>
-    new Intl.NumberFormat('es-MX', { style: 'currency', currency }).format(amount || 0);
-
-const formatDate = (iso) => {
-    if (!iso) return '—';
-    return new Date(iso).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' });
-};
+import { formatCurrency, formatDate } from '../utils/formatters.js';
 
 // ─── Badge de estado ──────────────────────────────────────────────────
 const StatusBadge = ({ status }) => {
