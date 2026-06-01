@@ -30,7 +30,7 @@ const Login = ({ onLogin }) => {
         setTimeout(() => {
             if (username === 'Vladislav' && password === '1234') {
                 if (onLogin) {
-                    onLogin('Vladislav');
+                    onLogin({ name: 'Vladislav', role: 'Tesorería' });
                 }
             } else {
                 setError('Usuario o contraseña incorrectos.');

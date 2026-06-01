@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import {
     CheckCircle2, Building2, DollarSign, Users, FileText,
-    Download, Search, ChevronLeft, ChevronRight, Package, ShieldAlert
+    Download, Search, ChevronLeft, ChevronRight, Package, ShieldAlert, Landmark
 } from 'lucide-react';
 import Card from '../components/Card';
 import Button from '../components/Button';
@@ -24,8 +24,8 @@ const AuthorizedPayments = ({ finalizedInvoices, activeBatch, catalogs }) => {
         const mxn = invoices.filter(i => i.currency === 'MXN').reduce((s, i) => s + i.amount, 0);
         const usd = invoices.filter(i => i.currency === 'USD').reduce((s, i) => s + i.amount, 0);
         const providers = new Set(invoices.map(i => i.providerName)).size;
-        const banks     = new Set(invoices.map(i => i.bankId)).size;
-        const errors    = invoices.filter(i => i.meta?.hasFiscalError).length;
+        const banks = new Set(invoices.map(i => i.bankId)).size;
+        const errors = invoices.filter(i => i.meta?.hasFiscalError).length;
         return { total: invoices.length, mxn, usd, providers, banks, errors };
     }, [finalizedInvoices]);
 
@@ -34,13 +34,13 @@ const AuthorizedPayments = ({ finalizedInvoices, activeBatch, catalogs }) => {
         const map = new Map();
         (finalizedInvoices || []).forEach(inv => {
             const bankMeta = CATALOG_BANCOS.find(b => b.id === inv.bankId);
-            const key  = inv.bankId || 'Sin Asignar';
+            const key = inv.bankId || 'Sin Asignar';
             const name = bankMeta?.bank || key;
             const curr = bankMeta?.currency_code || inv.currency || 'MXN';
             if (!map.has(key)) map.set(key, { id: key, name, currency: curr, amount: 0, count: 0 });
             const node = map.get(key);
             node.amount += inv.amount;
-            node.count  += 1;
+            node.count += 1;
         });
         return Array.from(map.values()).sort((a, b) => b.amount - a.amount);
     }, [finalizedInvoices, CATALOG_BANCOS]);
@@ -56,8 +56,8 @@ const AuthorizedPayments = ({ finalizedInvoices, activeBatch, catalogs }) => {
         );
     }, [finalizedInvoices, searchTerm]);
 
-    const totalPages    = Math.ceil(filtered.length / PAGE_SIZE) || 1;
-    const paginated     = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+    const totalPages = Math.ceil(filtered.length / PAGE_SIZE) || 1;
+    const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
     // --- Export CSV ---
     const handleExport = () => {
@@ -92,21 +92,15 @@ const AuthorizedPayments = ({ finalizedInvoices, activeBatch, catalogs }) => {
 
             {/* Header */}
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                <div>
-                    <div className="flex items-center gap-3">
-                        <div className="h-10 w-10 bg-emerald-500 rounded-xl flex items-center justify-center text-white shadow-lg shadow-emerald-200">
-                            <CheckCircle2 size={22} />
-                        </div>
-                        <div>
-                            <h1 className="text-2xl font-bold tracking-tight text-slate-800">Pagos Autorizados</h1>
-                            <div className="flex items-center gap-2 mt-0.5">
-                                <span className="text-xs text-slate-400 font-mono">Batch:</span>
-                                <span className="text-xs font-black text-primary font-mono">{activeBatch.id}</span>
-                                <span className="text-xs text-slate-400">·</span>
-                                <span className="text-xs text-slate-500">
-                                    {new Date(activeBatch.createdAt).toLocaleString('es-MX')}
-                                </span>
-                            </div>
+                <div className="flex items-center">
+                    <div>
+                        <h1 className="text-2xl font-black text-slate-800 tracking-tight uppercase">Pagos Autorizados</h1>
+                        <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Batch: {activeBatch.id}</span>
+                            <span className="text-[10px] text-slate-400">·</span>
+                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+                                {new Date(activeBatch.createdAt).toLocaleString('es-MX')}
+                            </span>
                         </div>
                     </div>
                 </div>

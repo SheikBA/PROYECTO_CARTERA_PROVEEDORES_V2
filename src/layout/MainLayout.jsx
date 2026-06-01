@@ -8,6 +8,8 @@ const MainLayout = ({ currentUser, onLogout, children, currentModule, setCurrent
     const currentModuleItem = menuItems.find(m => m.id === currentModule);
     const currentModuleTitle = currentModuleItem ? currentModuleItem.label : 'Módulo';
 
+    const appName = "PAGOS | Tesorería H2H";
+
     return (
         <div className="flex h-screen bg-background font-sans text-textPrimary overflow-hidden w-full">
             <Sidebar
@@ -18,6 +20,7 @@ const MainLayout = ({ currentUser, onLogout, children, currentModule, setCurrent
                 onLogout={onLogout}
                 menuItems={menuItems}
                 onMoveMenuItem={onMoveMenuItem}
+                appName={appName}
             />
 
             <div className="flex-1 flex flex-col h-screen overflow-hidden">

@@ -3,7 +3,7 @@ import {
     Search, Filter, GitMerge, Send, CheckCircle2, ShieldAlert,
     ChevronDown, X, Layers, Unlock, AlertTriangle, Mail, Hash,
     Calendar, User, FileSpreadsheet, DollarSign, Eye, MoreHorizontal,
-    EyeOff, Inbox
+    EyeOff, Inbox, Landmark
 } from 'lucide-react';
 
 // ─── Tokens HS ────────────────────────────────────────────────────────
@@ -23,13 +23,13 @@ const formatDate = (iso) => {
 // ─── Badge de estado ──────────────────────────────────────────────────
 const StatusBadge = ({ status }) => {
     const map = {
-        pending:      { label: 'PENDIENTE',    cls: 'bg-amber-50 text-amber-700 border-amber-200' },
-        review:       { label: 'EN REVISIÓN',  cls: 'bg-blue-50 text-blue-700 border-blue-200' },
-        finalized:    { label: 'EN REVISIÓN',  cls: 'bg-blue-50 text-blue-700 border-blue-200' },
-        approved:     { label: 'APROBADO',     cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
-        sent:         { label: 'ENVIADO',      cls: 'bg-slate-100 text-slate-500 border-slate-200' },
-        consolidated: { label: 'CONSOLIDADO',  cls: 'bg-purple-50 text-purple-700 border-purple-200' },
-        closed:       { label: 'CERRADO',      cls: 'bg-slate-200 text-slate-600 border-slate-300' },
+        pending: { label: 'PENDIENTE', cls: 'bg-amber-50 text-amber-700 border-amber-200' },
+        review: { label: 'EN REVISIÓN', cls: 'bg-blue-50 text-blue-700 border-blue-200' },
+        finalized: { label: 'EN REVISIÓN', cls: 'bg-blue-50 text-blue-700 border-blue-200' },
+        approved: { label: 'APROBADO', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+        sent: { label: 'ENVIADO', cls: 'bg-slate-100 text-slate-500 border-slate-200' },
+        consolidated: { label: 'CONSOLIDADO', cls: 'bg-purple-50 text-purple-700 border-purple-200' },
+        closed: { label: 'CERRADO', cls: 'bg-slate-200 text-slate-600 border-slate-300' },
     };
     const { label, cls } = map[status] || map.pending;
     return (
@@ -123,7 +123,7 @@ const MultiBatch = ({ batchList = [], setBatchList, currentUser }) => {
                 .map(toBatchItem);
             return newItems.length > 0 ? [...newItems, ...prev] : prev;
         });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [batchList]);
 
     const [selected, setSelected] = useState(new Set());
@@ -305,13 +305,15 @@ const MultiBatch = ({ batchList = [], setBatchList, currentUser }) => {
 
             {/* ── HEADER ──────────────────────────────────────────── */}
             <div className="shrink-0 flex items-center justify-between bg-white border border-slate-200 rounded-xl px-5 py-3 shadow-sm">
-                <div>
-                    <h1 className="text-base font-black text-slate-800 tracking-tight leading-none">
-                        Batches de Facturas — Cartera
-                    </h1>
-                    <p className="text-[11px] text-slate-400 mt-0.5">
-                        Gestión y consolidación de lotes para envío a aprobación
-                    </p>
+                <div className="flex items-center">
+                    <div>
+                        <h1 className="text-2xl font-black text-slate-800 tracking-tight uppercase">
+                            Batches de Facturas
+                        </h1>
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                            Gestión y consolidación de lotes para envío a aprobación
+                        </p>
+                    </div>
                 </div>
                 <span className="inline-flex items-center gap-1.5 bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-wider shrink-0">
                     <Layers size={11} />
@@ -407,7 +409,7 @@ const MultiBatch = ({ batchList = [], setBatchList, currentUser }) => {
                     }
                 >
                     <Send size={14} />
-                    ENVIAR A APROBACIÓN {canSend ? `(${selected.size})` : ''}
+                    ENVIAR PROPUESTA {canSend ? `(${selected.size})` : ''}
                 </button>
             </div>
 

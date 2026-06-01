@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Search, Plus, Filter, FileText, Edit2, Trash2, MoreVertical } from 'lucide-react';
+import { Search, Plus, Filter, FileText, Edit2, Trash2, MoreVertical, Landmark } from 'lucide-react';
 import Button from '../components/Button';
 import { MOCK_TEMPLATES } from '../data/mockData';
 
@@ -16,16 +16,18 @@ const Templates = () => {
             tpl.id.toLowerCase().includes(searchTerm.toLowerCase())
     );
 
-    const activeCount   = MOCK_TEMPLATES.filter(t => t.status === 'active').length;
-    const draftCount    = MOCK_TEMPLATES.filter(t => t.status === 'draft').length;
+    const activeCount = MOCK_TEMPLATES.filter(t => t.status === 'active').length;
+    const draftCount = MOCK_TEMPLATES.filter(t => t.status === 'draft').length;
 
     return (
         <div className="p-6 h-full flex flex-col space-y-6 animate-fade-in">
             {/* Header */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                <div>
-                    <h1 className="text-2xl font-bold tracking-tight text-slate-800">Configuración de Plantillas</h1>
-                    <p className="text-slate-500 mt-1">Gestiona los formatos y estructuras de documentos.</p>
+                <div className="flex items-center">
+                    <div>
+                        <h1 className="text-2xl font-black text-slate-800 tracking-tight uppercase">Configuración de Plantillas</h1>
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Gestiona los formatos y estructuras de documentos</p>
+                    </div>
                 </div>
                 <div className="flex gap-3 w-full sm:w-auto">
                     <Button variant="secondary" icon={Filter} onClick={handleWip}>
@@ -115,17 +117,15 @@ const Templates = () => {
                                         </span>
                                     </td>
                                     <td className="p-4">
-                                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
-                                            template.status === 'active'
-                                                ? 'bg-emerald-50 text-emerald-600 border border-emerald-100'
-                                                : template.status === 'draft'
+                                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${template.status === 'active'
+                                            ? 'bg-emerald-50 text-emerald-600 border border-emerald-100'
+                                            : template.status === 'draft'
                                                 ? 'bg-amber-50 text-amber-600 border border-amber-100'
                                                 : 'bg-slate-100 text-slate-600 border border-slate-200'
-                                        }`}>
-                                            <span className={`w-1.5 h-1.5 rounded-full ${
-                                                template.status === 'active' ? 'bg-emerald-500' :
-                                                template.status === 'draft'  ? 'bg-amber-500'   : 'bg-slate-400'
-                                            }`} />
+                                            }`}>
+                                            <span className={`w-1.5 h-1.5 rounded-full ${template.status === 'active' ? 'bg-emerald-500' :
+                                                template.status === 'draft' ? 'bg-amber-500' : 'bg-slate-400'
+                                                }`} />
                                             {template.status === 'active' ? 'Activa' : template.status === 'draft' ? 'Borrador' : 'Inactiva'}
                                         </span>
                                     </td>

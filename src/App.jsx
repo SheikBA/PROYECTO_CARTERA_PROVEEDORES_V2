@@ -8,7 +8,8 @@ import PaymentsV2 from './pages/PaymentsV2';
 import MultiBatch from './pages/MultiBatch';
 import Templates from './pages/Templates';
 import AuthorizedPayments from './pages/AuthorizedPayments';
-import { Briefcase } from 'lucide-react';
+import PaymentVerification from './pages/PaymentVerification'; // Importar el nuevo módulo
+import { Briefcase, Landmark, Layers, GitMerge, CheckCircle2, ShieldAlert, History, Upload, FileText, LayoutDashboard } from 'lucide-react'; // Añadir iconos para el menú
 import { DEFAULT_MENU_ITEMS } from './layout/menuItems';
 import { CATALOG_BANCOS_INICIAL, CATALOG_GRUPOS_INICIAL } from './data/catalogs';
 
@@ -19,8 +20,21 @@ const App = () => {
   // Estado de navegación
   const [currentModule, setCurrentModule] = useState('dataload');
 
-  // Estado del Menú (para permitir reordenamiento)
-  const [menuItems, setMenuItems] = useState(DEFAULT_MENU_ITEMS.filter(item => item.id !== 'payments'));
+  const [menuItems, setMenuItems] = useState([
+    { id: 'payments-v2', label: 'Gestión pagos v2', icon: Layers },
+    { id: 'multi-batch', label: 'Multi propuestas', icon: GitMerge },
+    { id: 'authorized-payments', label: 'Pagos', icon: CheckCircle2 },
+    { id: 'payment-verification', label: 'Comprobación de pagos', icon: Landmark },
+    {
+      id: 'rejected-parent', label: 'Pagos rechazados', icon: ShieldAlert, subItems: [
+        { id: 'rejected-h2h', label: 'Pagos rechazados H2H' },
+        { id: 'rejected-general', label: 'Pagos rechazados General' }
+      ]
+    },
+    { id: 'reports', label: 'Reportería', icon: History },
+    { id: 'dataload', label: 'Carga de datos', icon: Upload },
+    { id: 'templates', label: 'Configuración de plantillas', icon: FileText }
+  ]);
 
   // Estado global de facturas (compartido entre Carga y Pagos)
   const [rawInvoices, setRawInvoices] = useState([]);
@@ -125,6 +139,16 @@ const App = () => {
             setBatchList={setBatchList}
           />
         );
+
+      case 'payment-verification':
+        return (
+          <PaymentVerification
+            trackingData={trackingData}
+            setTrackingData={setTrackingData}
+          // Aquí podrías pasar otros props si fueran necesarios, como catalogs o currentUser
+          />
+        );
+
 
       case 'multi-batch':
         return (

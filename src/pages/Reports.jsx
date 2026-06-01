@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { ShieldAlert, History, Download, Search, Filter, Calendar, Printer, Building2, User, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ShieldAlert, History, Download, Search, Filter, Calendar, Printer, Building2, User, ChevronLeft, ChevronRight, Landmark } from 'lucide-react';
 import Card from '../components/Card';
 import Button from '../components/Button';
 import Badge from '../components/Badge';
@@ -29,7 +29,7 @@ const Reports = ({ rejectedInvoices, trackingData }) => {
     }, [rejectedInvoices, filterTerm, dateFilter]);
 
     const rejectedTotalPages = Math.ceil(filteredRejected.length / PAGE_SIZE) || 1;
-    const paginatedRejected  = filteredRejected.slice((rejectedPage - 1) * PAGE_SIZE, rejectedPage * PAGE_SIZE);
+    const paginatedRejected = filteredRejected.slice((rejectedPage - 1) * PAGE_SIZE, rejectedPage * PAGE_SIZE);
 
     // --- Reporte 2: Log de Cambios ---
     const changeLog = useMemo(() => {
@@ -41,9 +41,9 @@ const Reports = ({ rejectedInvoices, trackingData }) => {
                 item.auditLog.forEach(log => {
                     logs.push({
                         ...log,
-                        invoice:    item.meta?.invoice || 'S/N',
-                        provider:   item.providerName,
-                        amount:     item.amount,
+                        invoice: item.meta?.invoice || 'S/N',
+                        provider: item.providerName,
+                        amount: item.amount,
                         trackingId: item.trackingId || 'N/A',
                     });
                 });
@@ -54,13 +54,13 @@ const Reports = ({ rejectedInvoices, trackingData }) => {
             .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
             .filter(log =>
                 String(log.provider || '').toLowerCase().includes(filterTerm.toLowerCase()) ||
-                String(log.event    || '').toLowerCase().includes(filterTerm.toLowerCase()) ||
-                String(log.invoice  || '').toLowerCase().includes(filterTerm.toLowerCase())
+                String(log.event || '').toLowerCase().includes(filterTerm.toLowerCase()) ||
+                String(log.invoice || '').toLowerCase().includes(filterTerm.toLowerCase())
             );
     }, [trackingData, rejectedInvoices, filterTerm]);
 
     const changelogTotalPages = Math.ceil(changeLog.length / PAGE_SIZE) || 1;
-    const paginatedChangelog  = changeLog.slice((changelogPage - 1) * PAGE_SIZE, changelogPage * PAGE_SIZE);
+    const paginatedChangelog = changeLog.slice((changelogPage - 1) * PAGE_SIZE, changelogPage * PAGE_SIZE);
 
     // --- Exportar a CSV ---
     const handleExport = () => {
@@ -69,23 +69,23 @@ const Reports = ({ rejectedInvoices, trackingData }) => {
         if (activeTab === 'rejected') {
             csv = 'Fecha Rechazo,Factura,Proveedor,Monto,Tipo,Rechazado Por\n';
             filteredRejected.forEach(inv => {
-                const fecha    = inv.rejectedAt ? new Date(inv.rejectedAt).toLocaleString('es-MX') : 'N/A';
-                const factura  = inv.meta?.invoice ?? '';
-                const prov     = inv.providerName ?? '';
-                const monto    = inv.amount ?? 0;
-                const tipo     = inv.meta?.isH2H ? 'H2H' : 'GENERAL';
-                const usuario  = inv.auditLog?.[inv.auditLog.length - 1]?.user ?? 'Admin';
+                const fecha = inv.rejectedAt ? new Date(inv.rejectedAt).toLocaleString('es-MX') : 'N/A';
+                const factura = inv.meta?.invoice ?? '';
+                const prov = inv.providerName ?? '';
+                const monto = inv.amount ?? 0;
+                const tipo = inv.meta?.isH2H ? 'H2H' : 'GENERAL';
+                const usuario = inv.auditLog?.[inv.auditLog.length - 1]?.user ?? 'Admin';
                 csv += `"${fecha}","${factura}","${prov}",${monto},"${tipo}","${usuario}"\n`;
             });
         } else {
             csv = 'Fecha/Hora,Usuario,Evento,Factura,Proveedor,Detalle\n';
             changeLog.forEach(log => {
-                const fecha   = log.timestamp ? new Date(log.timestamp).toLocaleString('es-MX') : '';
-                const usuario = log.user     ?? 'Sistema';
-                const evento  = log.event    ?? '';
-                const factura = log.invoice  ?? '';
-                const prov    = log.provider ?? '';
-                const detalle = log.details  ?? '';
+                const fecha = log.timestamp ? new Date(log.timestamp).toLocaleString('es-MX') : '';
+                const usuario = log.user ?? 'Sistema';
+                const evento = log.event ?? '';
+                const factura = log.invoice ?? '';
+                const prov = log.provider ?? '';
+                const detalle = log.details ?? '';
                 csv += `"${fecha}","${usuario}","${evento}","${factura}","${prov}","${detalle}"\n`;
             });
         }
@@ -126,13 +126,10 @@ const Reports = ({ rejectedInvoices, trackingData }) => {
         <div className="p-6 h-full flex flex-col space-y-6 animate-fade-in">
             {/* Header */}
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-6 rounded-xl border border-slate-200 shadow-sm gap-4">
-                <div className="flex items-center gap-4">
-                    <div className="h-12 w-12 bg-primary rounded-lg flex items-center justify-center text-white shadow-lg shadow-primary/20">
-                        <Building2 size={28} />
-                    </div>
+                <div className="flex items-center">
                     <div>
-                        <h1 className="text-xl font-black text-slate-800 uppercase tracking-tight">Hotel Shops — Reportería Fiscal</h1>
-                        <p className="text-xs text-slate-500 font-medium uppercase tracking-widest">Control Interno y Auditoría de Pagos</p>
+                        <h1 className="text-2xl font-black text-slate-800 tracking-tight uppercase">Hotel Shops — Reportería Fiscal</h1>
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Control Interno y Auditoría de Pagos</p>
                     </div>
                 </div>
                 <div className="flex gap-2">
