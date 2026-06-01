@@ -1,10 +1,10 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Search, Download, DollarSign, Clock, CheckCircle2, ChevronRight, ChevronLeft, ArrowLeft, RefreshCw, Building2, Layers, Users, X, Plus, ArrowRightLeft, Briefcase, FileText, ShieldAlert, ChevronUp, ChevronDown, Lock, Landmark, Send, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { Search, Download, DollarSign, Clock, CheckCircle2, ChevronRight, ChevronLeft, ArrowLeft, RefreshCw, Building2, Layers, Users, X, Plus, ArrowRightLeft, Briefcase, FileText, ShieldAlert, ChevronUp, ChevronDown, Lock, Landmark, Send, PanelLeftClose, PanelLeftOpen, AlertTriangle, Calendar, Trash2 } from 'lucide-react';
 import Button from '../components/Button';
 import Card from '../components/Card';
 import Badge from '../components/Badge';
 import Modal from '../components/Modal';
-// Ya no importamos CATALOG_... fijos, los recibiremos por props
+import { formatCurrency, formatDate } from '../utils/formatters.js';
 
 const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorizedInvoices, setAuthorizedInvoices, finalizedInvoices, setFinalizedInvoices, setRejectedInvoices, availableInvoices, setAvailableInvoices, trackingData, setTrackingData, catalogs, activeBatch, setActiveBatch, currentUser, mode = 'proposal', subMode = '' }) => {
     const isProposal = mode === 'proposal';
@@ -48,6 +48,20 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
     const [searchUuid, setSearchUuid] = useState('');
     const [searchResult, setSearchResult] = useState(null);
 
+    // --- P3: Sistema de modales propio (elimina alert/confirm) ---
+    const [p3Confirm, setP3Confirm] = useState(null);
+    // p3Confirm: { titulo, mensaje, onConfirm, variante: 'danger'|'warning'|'info' } | null
+
+    const [p3Toast, setP3Toast] = useState(null);
+    const showP3Toast = (msg) => { setP3Toast(msg); setTimeout(() => setP3Toast(null), 3000); };
+    const showP3Confirm = (titulo, mensaje, onConfirm, variante = 'warning') =>
+        setP3Confirm({ titulo, mensaje, onConfirm, variante });
+
+    // P3: Cambio de fecha — modal inline
+    const [fechaModal, setFechaModal] = useState(null);
+    // fechaModal: { providerName, invoiceId, fechaActual } | null
+    const [nuevaFecha, setNuevaFecha] = useState('');
+
     // Estados para Secciones Colapsables (Nivel 4)
     const [isFiscalExpanded, setIsFiscalExpanded] = useState(true);
     const [isNonFiscalExpanded, setIsNonFiscalExpanded] = useState(true);
@@ -57,26 +71,28 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
     const [invoiceSearch, setInvoiceSearch] = useState('');
     const ITEMS_PER_PAGE = 10;
 
-    // Helper formatting functions - Actualizado para soportar USD
-    const formatCurrency = (amount, currency = 'MXN') =>
-        new Intl.NumberFormat('es-MX', { style: 'currency', currency }).format(amount || 0);
-
-    // Helper para obtener info del banco y manejadores de campos editables
+    // --- HELPERS Y MANEJADORES DE CAMPOS EDITABLES ---
     const getBankInfo = (bankId) => {
-        const bank = CATALOG_BANCOS.find(b => b.id === bankId);
+        const bank = CATALOG_BANCOS.find(b => String(b.id) === String(bankId));
         return { name: bank?.bank || 'Sin Banco', swift: bank?.swift || '—' };
+    };
+
+    const updateInvoiceProperty = (id, field, value) => {
+        const update = (prev) => (prev || []).map(inv => inv.id === id ? { ...inv, [field]: value } : inv);
+        if (setRawInvoices) setRawInvoices(update);
+        if (setAuthorizedInvoices) setAuthorizedInvoices(update);
+        if (setFinalizedInvoices) setFinalizedInvoices(update);
     };
 
     const handleRef1Change = (id, val) => updateInvoiceProperty(id, 'ref1', val);
     const handleRef2Change = (id, val) => updateInvoiceProperty(id, 'ref2', val);
     const handleEtiquetaChange = (id, val) => updateInvoiceProperty(id, 'etiqueta', val);
-    const updateInvoiceProperty = (id, field, value) => {
-        const update = (prev) => (prev || []).map(inv => inv.id === id ? { ...inv, [field]: value } : inv);
-        setRawInvoices(update);
-        if (setAuthorizedInvoices) setAuthorizedInvoices(update);
-    };
     const handlePayInvoices = (invoices) => alert(`Procesando pago de ${invoices.length} facturas...`);
     const handleRejectProviderGroup = (name) => alert(`Rechazando grupo: ${name}`);
+
+    // Estados para el detalle de KPIs en vista Autorizados
+    const [selectedBankKpi, setSelectedBankKpi] = useState(null);
+    const [isBankKpiModalOpen, setIsBankKpiModalOpen] = useState(false);
 
     // --------------------------------------------------------------------------------
     // CORE LOGIC: Derived State from rawInvoices
@@ -96,38 +112,39 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
         return invoicesArray;
     }, [rawInvoices, authorizedInvoices, isProposal]);
 
-    // 1. Calculate adjusted KPIs based on the new data model
+    // 1. Calculate adjusted KPIs based on the new data model for Sidebar
     const kpis = useMemo(() => {
         const list = displayInvoices || [];
         const TIPO_CAMBIO = 18.50; // Valor base para cálculos equivalentes
 
         const totals = { mxn: 0, usd: 0 };
-        const companyData = {}; // Agrupación por compañía
-        const bankData = {};    // Agrupación por banco
+        const companyData = {};
+        const bankData = {};
         const typeData = { H2H: { mxn: 0, usd: 0 }, MANUAL: { mxn: 0, usd: 0 } };
 
         list.forEach(inv => {
-            const mMXN = Number(inv.montoMXN || 0);
-            const mUSD = Number(inv.montoUSD || 0);
-            const co = inv.company || 'OTRO';
-            const bk = inv.banco || 'SIN BANCO';
-            const tp = inv.tipoPago || 'MANUAL';
+            const mMXN = inv.currency === 'MXN' ? (inv.amount || 0) : 0;
+            const mUSD = inv.currency === 'USD' ? (inv.amount || 0) : 0;
+            const co = inv.company || inv.meta?.company || 'OTRO';
 
-            // Totales Generales
+            // Obtener nombre de banco limpio
+            const bankMatch = CATALOG_BANCOS.find(b => String(b.id) === String(inv.bankId));
+            const rawName = inv.meta?.nombre_de_banco || inv.meta?.banco_nombre || bankMatch?.bank || inv.bankId || 'SIN BANCO';
+            const bkName = String(rawName).split(/[. ]/)[0].trim().toUpperCase();
+
+            const tp = inv.meta?.paymentMethod || (inv.meta?.isH2H ? 'H2H' : 'MANUAL');
+
             totals.mxn += mMXN;
             totals.usd += mUSD;
 
-            // Por Compañía
             if (!companyData[co]) companyData[co] = { mxn: 0, usd: 0 };
             companyData[co].mxn += mMXN;
             companyData[co].usd += mUSD;
 
-            // Por Banco
-            if (!bankData[bk]) bankData[bk] = { mxn: 0, usd: 0 };
-            bankData[bk].mxn += mMXN;
-            bankData[bk].usd += mUSD;
+            if (!bankData[bkName]) bankData[bkName] = { mxn: 0, usd: 0 };
+            bankData[bkName].mxn += mMXN;
+            bankData[bkName].usd += mUSD;
 
-            // Por Tipo de Pago
             if (typeData[tp]) {
                 typeData[tp].mxn += mMXN;
                 typeData[tp].usd += mUSD;
@@ -142,7 +159,7 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
             xr: TIPO_CAMBIO,
             fiscalErrors: list.filter(inv => inv.meta?.hasFiscalError).length
         };
-    }, [rawInvoices, authorizedInvoices, trackingData, isProposal, CATALOG_BANCOS]);
+    }, [displayInvoices, CATALOG_BANCOS]);
 
     // 2. Group Invoices by Bank -> Company -> Group -> Provider -> Invoices
     const bankTree = useMemo(() => {
@@ -363,16 +380,10 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
     };
 
     const handleConfirmReassign = () => {
-        if (!reassignTargetBank) return alert("Selecciona un banco destino.");
-
+        if (!reassignTargetBank) { showP3Toast('Selecciona un banco destino.'); return; }
         const targetBank = CATALOG_BANCOS.find(b => b.id === reassignTargetBank);
-        if (!targetBank) {
-            return alert("Error: No se encontró el banco destino en el catálogo.");
-        }
-
-        if (targetBank.id === reassignSourceBank.id) {
-            return alert("El banco destino debe ser diferente.");
-        }
+        if (!targetBank) { showP3Toast('Error: banco destino no encontrado en catálogo.'); return; }
+        if (targetBank.id === reassignSourceBank.id) { showP3Toast('El banco destino debe ser diferente.'); return; }
 
         setRawInvoices(prev => prev.map(inv => {
             if (inv.bankId === reassignSourceBank.id) {
@@ -382,33 +393,26 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
         }));
 
         setIsReassignModalOpen(false);
-        alert(`Se han movido todos los pagos de ${reassignSourceBank.name} al nuevo banco.`);
+        showP3Toast(`Pagos de ${reassignSourceBank.name} movidos a ${targetBank.bank}.`);
     };
 
     // --- LOGICA DE BATCH (FINALIZAR PROCESO) ---
     const handleFinalizeBatch = () => {
-        if (authorizedInvoices.length === 0) {
-            alert("No hay facturas autorizadas para finalizar la propuesta.");
+        if ((authorizedInvoices || []).length === 0) {
+            showP3Toast('No hay facturas autorizadas para finalizar la propuesta.');
             return;
         }
-
-        const confirmFinalize = window.confirm("¿Está seguro de finalizar esta propuesta de pago? Una vez finalizada, se generará un lote para el módulo de Pagos Autorizados.");
-
-        if (confirmFinalize) {
-            const batchId = `BCH-${new Date().getFullYear()}${(new Date().getMonth() + 1).toString().padStart(2, '0')}-${Math.floor(1000 + Math.random() * 9000)}`;
-
-            // CREAR SNAPSHOT: Enviamos la información actual a la lista definitiva de Pagos Autorizados
-            if (setFinalizedInvoices) {
-                setFinalizedInvoices([...authorizedInvoices]);
-            }
-
-            setActiveBatch({
-                id: batchId,
-                status: 'finalized',
-                createdAt: new Date().toISOString()
-            });
-            alert(`Propuesta finalizada con éxito. ID de Lote: ${batchId}`);
-        }
+        showP3Confirm(
+            'Finalizar Propuesta',
+            `¿Finalizar esta propuesta de pago? Se generará un lote para el módulo de Pagos Autorizados con ${authorizedInvoices.length} factura(s).`,
+            () => {
+                const batchId = `BCH-${new Date().getFullYear()}${(new Date().getMonth() + 1).toString().padStart(2, '0')}-${Math.floor(1000 + Math.random() * 9000)}`;
+                if (setFinalizedInvoices) setFinalizedInvoices([...authorizedInvoices]);
+                setActiveBatch({ id: batchId, status: 'finalized', createdAt: new Date().toISOString() });
+                showP3Toast(`Propuesta finalizada. ID de Lote: ${batchId}`);
+            },
+            'info'
+        );
     };
 
     const handleEditBatch = () => {
@@ -416,36 +420,26 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
     };
 
     const handleDeleteBatch = () => {
-        const confirmDelete = window.confirm("¡ADVERTENCIA! Si elimina el Batch, todas las facturas autorizadas se liberarán y volverán al panel de Gestión. ¿Desea continuar?");
-
-        if (confirmDelete) {
-            // Liberar facturas: Mover de authorizedInvoices a rawInvoices
-            if (setProposalInvoices) {
-                setProposalInvoices(prev => [...prev, ...authorizedInvoices]);
-            }
-            if (setAuthorizedInvoices) {
-                setAuthorizedInvoices([]);
-            }
-            setActiveBatch(null);
-            alert("Batch eliminado. Las facturas han sido liberadas.");
-        }
+        showP3Confirm(
+            'Eliminar Batch',
+            '¡ADVERTENCIA! Todas las facturas autorizadas se liberarán y volverán al panel de Gestión. ¿Desea continuar?',
+            () => {
+                if (setProposalInvoices) setProposalInvoices(prev => [...prev, ...(authorizedInvoices || [])]);
+                if (setAuthorizedInvoices) setAuthorizedInvoices([]);
+                setActiveBatch(null);
+                showP3Toast('Batch eliminado. Las facturas han sido liberadas.');
+            },
+            'danger'
+        );
     };
 
     // --- LÓGICA DE MOVIMIENTO ENTRE ESTADOS ---
     const handleAuthorize = (invoicesToMove) => {
         if (!invoicesToMove || invoicesToMove.length === 0) return;
-
         const ids = invoicesToMove.map(inv => inv.id);
-
-        // 1. Quitar de la lista actual (Proposal)
         setRawInvoices(prev => prev.filter(inv => !ids.includes(inv.id)));
-
-        // 2. Agregar a la lista de Autorizados
-        if (setAuthorizedInvoices) {
-            setAuthorizedInvoices(prev => [...prev, ...invoicesToMove]);
-        }
-
-        alert(`Se han autorizado ${invoicesToMove.length} facturas.`);
+        if (setAuthorizedInvoices) setAuthorizedInvoices(prev => [...prev, ...invoicesToMove]);
+        showP3Toast(`${invoicesToMove.length} factura(s) autorizadas.`);
     };
 
     const handleReject = (invoicesToMove) => {
@@ -482,44 +476,34 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
     const handleSearchInvoice = () => {
         const found = (availableInvoices || []).find(inv => inv.uuid === searchUuid);
         setSearchResult(found || null);
-        if (!found) alert("No se encontró ninguna factura con ese UUID en el ERP.");
+        if (!found) showP3Toast('No se encontró ninguna factura con ese UUID en el ERP.');
     };
 
     const handleAddFoundInvoice = () => {
         if (!searchResult) return;
-
-        // Transforma el resultado de la búsqueda al formato interno de `rawInvoices`
         const newRawInvoice = {
             id: searchResult.uuid,
             uuid: searchResult.uuid,
             providerName: searchResult.providerName,
             amount: searchResult.amount,
             currency: searchResult.currency,
-            dueDate: new Date().toISOString().split('T')[0], // Default due date
+            dueDate: new Date().toISOString().split('T')[0],
             status: 'pending',
-            group: 'Sin Grupo', // Default group
-            bankId: 'Unassigned-MXN', // Default to unassigned
+            group: 'Sin Grupo',
+            bankId: 'Unassigned-MXN',
             company: searchResult.company,
             meta: { ...searchResult }
         };
-
-        // Validar si la factura ya existe en la propuesta
-        if (rawInvoices.some(inv => inv.id === newRawInvoice.id)) {
-            alert("Esta factura ya se encuentra en la propuesta de pago.");
+        if ((rawInvoices || []).some(inv => inv.id === newRawInvoice.id)) {
+            showP3Toast('Esta factura ya se encuentra en la propuesta de pago.');
             return;
         }
-
         setRawInvoices(prev => [...prev, newRawInvoice]);
-
-        // Opcional: remover de la lista de "disponibles" para no agregarla dos veces
-        setAvailableInvoices(prev => (prev || []).filter(inv => inv.uuid !== searchResult.uuid));
-
-        // Resetear el modal
+        if (setAvailableInvoices) setAvailableInvoices(prev => (prev || []).filter(inv => inv.uuid !== searchResult.uuid));
         setSearchResult(null);
         setSearchUuid('');
         setIsAddModalOpen(false);
-
-        alert("Factura agregada a la propuesta exitosamente.");
+        showP3Toast('Factura agregada a la propuesta exitosamente.');
     };
 
 
@@ -612,10 +596,37 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
 
     const authTotals = useMemo(() => {
         if (!isAuthorized) return { mxn: 0, usd: 0 };
-        const mxn = authorizedSourceData.filter(i => i.currency !== 'USD').reduce((s, i) => s + (i.amount || 0), 0);
-        const usd = authorizedSourceData.filter(i => i.currency === 'USD').reduce((s, i) => s + (i.amount || 0), 0);
-        return { mxn, usd };
-    }, [isAuthorized, authorizedSourceData]);
+        const result = {
+            mxn: 0, usd: 0,
+            byCompany: {}, // { company: { mxn, usd } }
+            byBank: {}     // { bank: { mxn, usd, companies: { company: { mxn, usd } } } }
+        };
+
+        authorizedSourceData.forEach(inv => {
+            const co = inv.meta?.company || inv.company || 'Sin Empresa';
+
+            // Resolución de Nombre de Banco: 
+            // Priorizamos 'nombre_de_banco' que viene del Excel para agrupar IDs como BNX72 bajo "BANORTE"
+            const bankMeta = CATALOG_BANCOS.find(b => String(b.id) === String(inv.bankId));
+            const rawBankName = inv.meta?.nombre_de_banco || inv.meta?.banco_nombre || bankMeta?.bank || inv.bankId || 'Sin Banco';
+
+            const bkName = String(rawBankName).split(/[. ]/)[0].trim().toUpperCase();
+
+            const amt = inv.amount || 0;
+            const cur = inv.currency || 'MXN';
+
+            if (cur === 'USD') result.usd += amt; else result.mxn += amt;
+
+            if (!result.byCompany[co]) result.byCompany[co] = { mxn: 0, usd: 0 };
+            result.byCompany[co][cur === 'USD' ? 'usd' : 'mxn'] += amt;
+
+            if (!result.byBank[bkName]) result.byBank[bkName] = { mxn: 0, usd: 0, companies: {} };
+            result.byBank[bkName][cur === 'USD' ? 'usd' : 'mxn'] += amt;
+            if (!result.byBank[bkName].companies[co]) result.byBank[bkName].companies[co] = { mxn: 0, usd: 0 };
+            result.byBank[bkName].companies[co][cur === 'USD' ? 'usd' : 'mxn'] += amt;
+        });
+        return result;
+    }, [isAuthorized, authorizedSourceData, CATALOG_BANCOS]);
 
     const filteredAuthorized = useMemo(() => {
         if (!isAuthorized) return [];
@@ -699,71 +710,84 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
         }
     };
 
-    // Confirm Global Payment - sends everything to tracking
     const handleGlobalConfirm = () => {
         const inputAmount = parseFloat(globalAmountInput) || 0;
         const totalExpected = kpis.totalToPay;
-
         if (Math.abs(inputAmount - totalExpected) > 0.01) {
-            alert(`Error de Validación: El importe ingresado (${formatCurrency(inputAmount)}) debe ser IGUAL al Monto Total Autorizado (${formatCurrency(totalExpected)}) para proceder con la dispersión.`);
+            showP3Toast(`El importe ingresado (${formatCurrency(inputAmount)}) debe ser igual al total autorizado (${formatCurrency(totalExpected)}).`);
             return;
         }
-
-        if (confirm(`¿Estás seguro de confirmar el pago masivo por ${formatCurrency(kpis.totalToPay)}?`)) {
-
-            // REQUERIMIENTO: Transformar a estatus "PROCESANDO PAGO" y agregar log inicial para trazabilidad
-            const newTracking = (rawInvoices || []).map(inv => ({
-                ...inv,
-                trackingId: `TRK-${Math.floor(Math.random() * 10000 + 1000)}`,
-                processedDate: new Date().toISOString().split('T')[0],
-                status: 'PROCESANDO PAGO',
-                batchId: activeBatch?.id || 'MANUAL',
-                auditLog: [{
-                    event: 'DISPERSION_ERP',
-                    timestamp: new Date().toISOString(),
-                    user: currentUser?.name || 'Sistema',
-                    details: `Pago enviado a cola de procesamiento ERP por ${currentUser?.name || 'usuario desconocido'}`
-                }]
-            }));
-
-            setTrackingData(prev => [...prev, ...newTracking]);
-
-            // Limpieza y cambio de estado visual
-            setRawInvoices([]);
-            setHasJustFinished(true);
-
-            setSelectedBank(null);
-            setSelectedCompany(null);
-            setSelectedGroup(null);
-            setSelectedProvider(null);
-            setDrillLevel(0);
-            if (setActiveBatch) setActiveBatch(null);
-        }
+        showP3Confirm(
+            'Confirmar pago masivo',
+            `¿Confirmar el pago masivo por ${formatCurrency(kpis.totalToPay)}? Esta acción enviará las facturas a la cola de procesamiento ERP.`,
+            () => {
+                const newTracking = (rawInvoices || []).map(inv => ({
+                    ...inv,
+                    trackingId: `TRK-${Math.floor(Math.random() * 10000 + 1000)}`,
+                    processedDate: new Date().toISOString().split('T')[0],
+                    status: 'PROCESANDO PAGO',
+                    batchId: activeBatch?.id || 'MANUAL',
+                    auditLog: [{ event: 'DISPERSION_ERP', timestamp: new Date().toISOString(), user: currentUser?.name || 'Sistema', details: `Pago enviado por ${currentUser?.name || 'usuario desconocido'}` }]
+                }));
+                if (setTrackingData) setTrackingData(prev => [...prev, ...newTracking]);
+                setRawInvoices([]);
+                setHasJustFinished(true);
+                setSelectedBank(null); setSelectedCompany(null); setSelectedGroup(null); setSelectedProvider(null); setDrillLevel(0);
+                if (setActiveBatch) setActiveBatch(null);
+            },
+            'info'
+        );
     };
 
-    // Nueva acción: Devolver factura rechazada a la gestión de pagos (Reprocesar)
+    // HU-011 — Reprocesar grupo rechazado (reingresa al flujo de validación)
     const handleRestoreProviderGroup = (providerName) => {
-        if (window.confirm(`¿Deseas devolver al proveedor "${providerName}" a la gestión de pagos? Las facturas volverán a estar pendientes de autorización.`)) {
-            // 1. Identificamos las facturas de este proveedor en la lista de rechazados
-            const toRestore = rawInvoices.filter(inv => inv.providerName === providerName);
-
-            // 2. Quitamos del bucket de rechazados
-            if (setRejectedInvoices) {
-                setRejectedInvoices(prev => prev.filter(inv => inv.providerName !== providerName));
-            }
-
-            // 3. Devolvemos a la propuesta original (Gestión) marcándolas como pendientes
-            if (setProposalInvoices) {
-                setProposalInvoices(prev => [
+        const toRestore = rawInvoices.filter(inv => inv.providerName === providerName);
+        showP3Confirm(
+            'Reprocesar grupo',
+            `¿Devolver al proveedor "${providerName}" a Gestión de Pagos? ${toRestore.length} factura(s) volverán a estado pendiente.`,
+            () => {
+                if (setRejectedInvoices) setRejectedInvoices(prev => prev.filter(inv => inv.providerName !== providerName));
+                if (setProposalInvoices) setProposalInvoices(prev => [
                     ...prev,
-                    ...toRestore.map(inv => ({
-                        ...inv,
-                        status: 'pending',
-                        _status: 'pending'
-                    }))
+                    ...toRestore.map(inv => ({ ...inv, status: 'pending', _status: 'pending', meta: { ...(inv.meta || {}), rechazado_origen: inv.status } }))
                 ]);
-            }
-        }
+                showP3Toast(`Grupo "${providerName}" enviado a Gestión de Pagos.`);
+            },
+            'info'
+        );
+    };
+
+    // HU-012 — Cambio de fecha (exclusivo Tesorería — INV-004)
+    const handleAbrirCambioFecha = (providerName, invoiceId, fechaActual) => {
+        setNuevaFecha(fechaActual || '');
+        setFechaModal({ providerName, invoiceId });
+    };
+
+    const handleConfirmarCambioFecha = () => {
+        if (!nuevaFecha) { showP3Toast('Selecciona una fecha válida.'); return; }
+        const updateFn = inv => inv.id === fechaModal.invoiceId
+            ? { ...inv, dueDate: nuevaFecha, meta: { ...(inv.meta || {}), fecha_cambiada: true } }
+            : inv;
+        setRawInvoices(prev => (prev || []).map(updateFn));
+        if (setRejectedInvoices) setRejectedInvoices(prev => (prev || []).map(updateFn));
+        setFechaModal(null);
+        setNuevaFecha('');
+        showP3Toast('Fecha de pago actualizada.');
+    };
+
+    // HU-013 — Anular grupo (libera facturas a Epicor — estado anulado)
+    const handleAnularGrupo = (providerName) => {
+        const toAnular = rawInvoices.filter(inv => inv.providerName === providerName);
+        showP3Confirm(
+            'Anular grupo de pago',
+            `¿Anular el grupo de "${providerName}"? ${toAnular.length} factura(s) serán marcadas como ANULADAS y liberadas. Esta acción no se puede revertir.`,
+            () => {
+                if (setRejectedInvoices) setRejectedInvoices(prev => prev.filter(inv => inv.providerName !== providerName));
+                setRawInvoices(prev => (prev || []).filter(inv => inv.providerName !== providerName));
+                showP3Toast(`Grupo "${providerName}" anulado. Facturas liberadas.`);
+            },
+            'danger'
+        );
     };
 
     // --- FUNCIÓN HELPER PARA RENDERIZAR EL ACORDEÓN DE PROVEEDOR (EXTRAÍDA DEL RENDER) ---
@@ -809,16 +833,34 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
                                 <ShieldAlert size={18} />
                             </button>
                         )}
-                        {/* Botón de Restaurar (Solo en modo Historial de Rechazos) */}
-                        {isRejected && (
+                        {/* Botones P3: Reprocesar / Cambiar Fecha / Anular (HU-011/012/013) */}
+                        {isRejected && (<>
                             <button
                                 onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleRestoreProviderGroup(group.name); }}
-                                className="p-2 text-blue-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-all"
-                                title="Devolver a Gestión de Pagos"
+                                className="flex items-center gap-1 px-2 py-1 text-[9px] font-black text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg transition-all"
+                                title="HU-011: Reprocesar — reingresa al flujo de validación"
                             >
-                                <RefreshCw size={18} />
+                                <RefreshCw size={12} /> Reprocesar
                             </button>
-                        )}
+                            <button
+                                onClick={(e) => {
+                                    e.preventDefault(); e.stopPropagation();
+                                    const firstInv = group.invoices[0];
+                                    if (firstInv) handleAbrirCambioFecha(group.name, firstInv.id, firstInv.dueDate);
+                                }}
+                                className="flex items-center gap-1 px-2 py-1 text-[9px] font-black text-amber-600 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg transition-all"
+                                title="HU-012: Cambiar fecha de pago (exclusivo Tesorería)"
+                            >
+                                <Calendar size={12} /> Cambiar Fecha
+                            </button>
+                            <button
+                                onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleAnularGrupo(group.name); }}
+                                className="flex items-center gap-1 px-2 py-1 text-[9px] font-black text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg transition-all"
+                                title="HU-013: Anular grupo y liberar facturas"
+                            >
+                                <Trash2 size={12} /> Anular
+                            </button>
+                        </>)}
                         <ChevronRight size={18} className="text-slate-300 group-open:rotate-90 transition-transform" />
                     </div>
                 </div>
@@ -885,14 +927,49 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
                 </div>
                 <div className="flex-1 flex flex-col gap-4 min-h-0">
                     <div className="grid grid-cols-4 gap-4">
-                        <Card className="p-3 border-l-4 border-l-indigo-500">
-                            <p className="text-[9px] font-black text-slate-400 uppercase">Total Autorizado MXN</p>
-                            <p className="text-lg font-black text-slate-800">{formatCurrency(authTotals.mxn)}</p>
+                        <Card className="p-3 border-l-4 border-l-indigo-500 overflow-y-auto max-h-[120px]">
+                            <p className="text-[9px] font-black text-slate-400 uppercase mb-2">TOTAL AUTORIZADO MXN (POR EMPRESA)</p>
+                            <div className="space-y-2">
+                                {Object.entries(authTotals.byCompany).map(([co, amt]) => (
+                                    <div key={co} className="flex justify-between items-center border-b border-slate-50 last:border-0 pb-1">
+                                        <span className="text-[10px] font-bold text-slate-600">{co}</span>
+                                        <div className="text-right">
+                                            <p className="text-[10px] font-black text-slate-800 leading-none">{formatCurrency(amt.mxn)}</p>
+                                            {amt.usd > 0 && <p className="text-[9px] font-bold text-blue-600 leading-none mt-0.5">{formatCurrency(amt.usd, 'USD')} USD</p>}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
                         </Card>
-                        <Card className="p-3 border-l-4 border-l-blue-500">
-                            <p className="text-[9px] font-black text-slate-400 uppercase">Total Autorizado USD</p>
-                            <p className="text-lg font-black text-blue-700">{formatCurrency(authTotals.usd).replace('$', 'US$ ')}</p>
+
+                        <Card className="p-3 border-l-4 border-l-blue-500 overflow-y-auto max-h-[140px] shadow-sm">
+                            <p className="text-[10px] font-black text-slate-500 uppercase mb-2 flex items-center gap-2">
+                                <Landmark size={12} className="text-blue-500" /> TOTAL AUTORIZADO POR BANCO
+                            </p>
+                            <div className="space-y-1.5">
+                                <div className="flex justify-between items-center px-2 text-[8px] font-black text-slate-400 uppercase border-b border-slate-100 pb-1 mb-1">
+                                    <span className="w-[40%]">BANCO</span>
+                                    <span className="w-[30%] text-right">MONEDA MN</span>
+                                    <span className="w-[30%] text-right">MONEDA USD</span>
+                                </div>
+                                {Object.entries(authTotals.byBank).map(([bk, data]) => (
+                                    <div
+                                        key={bk}
+                                        onClick={() => { setSelectedBankKpi({ name: bk, ...data }); setIsBankKpiModalOpen(true); }}
+                                        className="flex justify-between items-center bg-slate-50 hover:bg-blue-50 p-2 rounded-lg cursor-pointer transition-all border border-slate-100 hover:border-blue-200 group"
+                                    >
+                                        <span className="text-[9px] font-black text-slate-700 truncate w-[40%] group-hover:text-blue-700 uppercase">{bk}</span>
+                                        <span className="text-[10px] font-bold text-slate-800 text-right w-[30%]">
+                                            {data.mxn > 0 ? formatCurrency(data.mxn).replace('$', '$ ') + ' MN' : '$ 0.00 MN'}
+                                        </span>
+                                        <span className="text-[10px] font-bold text-blue-600 text-right w-[30%]">
+                                            {data.usd > 0 ? formatCurrency(data.usd, 'USD').replace('US$', '$ ') + ' USD' : '$ 0.00 USD'}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
                         </Card>
+
                         <Card className="p-3 border-l-4 border-l-emerald-500 flex flex-col justify-center">
                             <p className="text-[9px] font-black text-slate-400 uppercase">Rutas H2H</p>
                             <Badge status="success">{filteredAuthorized.filter(i => (i.meta?.paymentMethod || (i.meta?.isH2H ? 'H2H' : 'Manual')) === 'H2H').length} Docs</Badge>
@@ -1022,6 +1099,36 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
                         </div>
                     </div>
                 </div>
+
+                {/* Modal de Detalle de Banco en KPI */}
+                <Modal
+                    isOpen={isBankKpiModalOpen}
+                    onClose={() => setIsBankKpiModalOpen(false)}
+                    title={`Detalle de Dispersión: ${selectedBankKpi?.name}`}
+                    size="sm"
+                >
+                    <div className="space-y-4">
+                        <div className="bg-slate-900 rounded-xl p-4 text-white flex justify-between items-center">
+                            <span className="text-xs font-bold uppercase text-slate-400">Total Acumulado</span>
+                            <div className="text-right">
+                                <p className="text-lg font-black">{formatCurrency(selectedBankKpi?.mxn)}</p>
+                                {selectedBankKpi?.usd > 0 && <p className="text-sm font-bold text-blue-400">{formatCurrency(selectedBankKpi?.usd, 'USD')} USD</p>}
+                            </div>
+                        </div>
+                        <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Desglose por Empresa</p>
+                            {selectedBankKpi && Object.entries(selectedBankKpi.companies).map(([co, amt]) => (
+                                <div key={co} className="flex justify-between items-center p-3 bg-white border border-slate-100 rounded-xl shadow-sm">
+                                    <span className="text-xs font-bold text-slate-700">{co}</span>
+                                    <div className="text-right">
+                                        <p className="text-xs font-black text-slate-800">{formatCurrency(amt.mxn)}</p>
+                                        {amt.usd > 0 && <p className="text-[10px] font-bold text-blue-600">{formatCurrency(amt.usd, 'USD')} USD</p>}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </Modal>
             </div>
         );
     };
@@ -1118,34 +1225,28 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
                                     </div>
                                     <div className="p-4 space-y-4 flex-1">
                                         <div className="grid grid-cols-2 gap-2">
-                                            <div className="bg-slate-50 p-2 rounded-lg border border-slate-100">
+                                            <div className="bg-slate-50 p-2 rounded-lg border border-slate-100 text-center">
                                                 <p className="text-[9px] font-black text-slate-400 uppercase">Total MXN</p>
                                                 <p className="text-xs font-black text-slate-800">{formatCurrency(kpis.totals.mxn)}</p>
                                             </div>
-                                            <div className="bg-slate-50 p-2 rounded-lg border border-slate-100">
+                                            <div className="bg-slate-50 p-2 rounded-lg border border-slate-100 text-center">
                                                 <p className="text-[9px] font-black text-slate-400 uppercase">Total USD</p>
                                                 <p className="text-xs font-black text-blue-600">{formatCurrency(kpis.totals.usd, 'USD')}</p>
                                             </div>
                                         </div>
                                         <div className="space-y-3 pt-2 border-t border-slate-100">
-                                            <div className="flex justify-between items-center">
-                                                <div>
-                                                    <p className="text-[10px] font-bold text-slate-700">HQPEN7</p>
-                                                    <p className="text-[8px] text-slate-400 font-bold uppercase italic tracking-tighter">* Incluye USD al TC {kpis.xr}</p>
+                                            {['HQPEN7', 'HQISLA17'].map(co => (
+                                                <div key={co} className="flex justify-between items-center">
+                                                    <div>
+                                                        <p className="text-[10px] font-bold text-slate-700">{co}</p>
+                                                        <p className="text-[8px] text-slate-400 font-bold uppercase italic tracking-tighter">* Incluye USD al TC {kpis.xr}</p>
+                                                    </div>
+                                                    <p className="text-xs font-black text-indigo-600">
+                                                        {formatCurrency((kpis.companyData[co]?.mxn || 0) + ((kpis.companyData[co]?.usd || 0) * kpis.xr))}
+                                                        <span className="text-[8px] ml-1 opacity-50 font-medium">MXN eq.</span>
+                                                    </p>
                                                 </div>
-                                                <p className="text-xs font-black text-indigo-600">
-                                                    {formatCurrency((kpis.companyData['HQPEN7']?.mxn || 0) + ((kpis.companyData['HQPEN7']?.usd || 0) * kpis.xr))}
-                                                </p>
-                                            </div>
-                                            <div className="flex justify-between items-center">
-                                                <div>
-                                                    <p className="text-[10px] font-bold text-slate-700">HQISLA17</p>
-                                                    <p className="text-[8px] text-slate-400 font-bold uppercase italic tracking-tighter">* Incluye USD al TC {kpis.xr}</p>
-                                                </div>
-                                                <p className="text-xs font-black text-indigo-600">
-                                                    {formatCurrency((kpis.companyData['HQISLA17']?.mxn || 0) + ((kpis.companyData['HQISLA17']?.usd || 0) * kpis.xr))}
-                                                </p>
-                                            </div>
+                                            ))}
                                         </div>
                                     </div>
                                 </Card>
@@ -1156,16 +1257,18 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
                                         <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Total por Banco</span>
                                         <Landmark size={14} className="text-amber-500" />
                                     </div>
-                                    <div className="p-4 space-y-3">
-                                        {['BANAMEX', 'BANORTE', 'SANTANDER'].map(bank => (
-                                            <div key={bank} className="flex justify-between items-end border-b border-slate-50 pb-2 last:border-0">
+                                    <div className="p-4 space-y-3 overflow-y-auto max-h-[250px]">
+                                        {Object.entries(kpis.bankData).map(([bankName, data]) => (
+                                            <div key={bankName} className="flex justify-between items-center border-b border-slate-50 pb-2 last:border-0 last:pb-0">
                                                 <div>
-                                                    <p className="text-[10px] font-black text-slate-700">{bank}</p>
-                                                    <p className="text-[9px] font-bold text-slate-400 uppercase">MXN / USD</p>
+                                                    <p className="text-[10px] font-black text-slate-700 uppercase">{bankName}</p>
+                                                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">MN / USD</p>
                                                 </div>
                                                 <div className="text-right">
-                                                    <p className="text-[10px] font-black text-slate-800">{formatCurrency(kpis.bankData[bank]?.mxn || 0)}</p>
-                                                    <p className="text-[9px] font-black text-blue-600">{formatCurrency(kpis.bankData[bank]?.usd || 0, 'USD')}</p>
+                                                    <p className="text-[10px] font-black text-slate-800 leading-none">{formatCurrency(data.mxn)}</p>
+                                                    {data.usd > 0 && (
+                                                        <p className="text-[9px] font-black text-blue-600 leading-none mt-1">{formatCurrency(data.usd, 'USD')}</p>
+                                                    )}
                                                 </div>
                                             </div>
                                         ))}
@@ -1404,6 +1507,16 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
                                                                                             </div>
                                                                                         </td>
                                                                                         <td className="p-4 font-mono text-slate-400">{inv.uuid}</td>
+                                                                                        <td className="p-4 text-slate-700">{inv.meta?.company}</td>
+                                                                                        <td className="p-4 text-slate-700">{getBankInfo(inv.bankId).name}</td>
+                                                                                        <td className="p-4 text-slate-700">{inv.group}</td>
+                                                                                        <td className="p-4 text-slate-700">{inv.paymentMethod || (inv.meta?.isH2H ? 'H2H' : 'MANUAL')}</td>
+                                                                                        <td className="p-4 text-right font-bold text-slate-700">{inv.currency === 'MXN' ? formatCurrency(inv.amount) : '—'}</td>
+                                                                                        <td className="p-4 text-right font-bold text-blue-700">{inv.currency === 'USD' ? formatCurrency(inv.amount, 'USD') : '—'}</td>
+                                                                                        <td className="p-4 font-mono text-slate-600">{getBankInfo(inv.bankId).swift}</td>
+                                                                                        <td className="p-4">{inv.ref1 || '—'}</td>
+                                                                                        <td className="p-4">{inv.ref2 || '—'}</td>
+                                                                                        <td className="p-4">{inv.etiqueta || '—'}</td>
                                                                                         <td className="p-4 text-right font-bold">{formatCurrency(inv.amount)}</td>
                                                                                         <td className="p-4 text-center">
                                                                                             <div className="flex justify-center gap-2">
@@ -1473,45 +1586,24 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
                                                                                                     {inv.meta?.isKissflow && <span className="bg-purple-600 text-white text-[9px] px-1.5 py-0.5 rounded-sm font-black shadow-sm uppercase">KISSFLOW</span>}
                                                                                                 </div>
                                                                                             </td>
+                                                                                            <td className="p-4 text-slate-700">{inv.meta?.company}</td>
+                                                                                            <td className="p-4 text-slate-700">{getBankInfo(inv.bankId).name}</td>
+                                                                                            <td className="p-4 text-slate-700">{inv.group}</td>
+                                                                                            <td className="p-4 text-slate-700">{inv.paymentMethod || (inv.meta?.isH2H ? 'H2H' : 'MANUAL')}</td>
+                                                                                            <td className="p-4 text-right font-bold text-slate-700">{inv.currency === 'MXN' ? formatCurrency(inv.amount) : '—'}</td>
+                                                                                            <td className="p-4 text-right font-bold text-blue-700">{inv.currency === 'USD' ? formatCurrency(inv.amount, 'USD') : '—'}</td>
+                                                                                            <td className="p-4 font-mono text-slate-600">{getBankInfo(inv.bankId).swift}</td>
+                                                                                            <td className="p-4">
+                                                                                                <input type="text" value={inv.ref1 || ''} onChange={(e) => handleRef1Change(inv.id, e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-[10px] outline-none focus:ring-1 focus:ring-primary" />
+                                                                                            </td>
+                                                                                            <td className="p-4">
+                                                                                                <input type="text" value={inv.ref2 || ''} onChange={(e) => handleRef2Change(inv.id, e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-[10px] outline-none focus:ring-1 focus:ring-primary" />
+                                                                                            </td>
+                                                                                            <td className="p-4">
+                                                                                                <input type="text" value={inv.etiqueta || ''} onChange={(e) => handleEtiquetaChange(inv.id, e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-[10px] outline-none focus:ring-1 focus:ring-primary" />
+                                                                                            </td>
                                                                                             <td className="p-4 text-amber-700 text-xs font-medium">
-                                                                                                <td className="p-4 text-slate-700">{inv.meta?.company}</td>
-                                                                                                <td className="p-4 text-slate-700">{getBankInfo(inv.bankId).name}</td>
-                                                                                                <td className="p-4 text-slate-700">{inv.group}</td>
-                                                                                                <td className="p-4 text-slate-700">{inv.paymentMethod || (inv.meta?.isH2H ? 'H2H' : 'MANUAL')}</td>
-                                                                                                <td className="p-4 text-right font-bold text-slate-700">
-                                                                                                    {inv.currency === 'MXN' ? formatCurrency(inv.amount) : '—'}
-                                                                                                </td>
-                                                                                                <td className="p-4 text-right font-bold text-blue-700">
-                                                                                                    {inv.currency === 'USD' ? formatCurrency(inv.amount, 'USD') : '—'}
-                                                                                                </td>
-                                                                                                <td className="p-4 font-mono text-slate-600">
-                                                                                                    {getBankInfo(inv.bankId).swift}
-                                                                                                </td>
-                                                                                                <td className="p-4">
-                                                                                                    <input
-                                                                                                        type="text"
-                                                                                                        value={inv.ref1 || ''}
-                                                                                                        onChange={(e) => handleRef1Change(inv.id, e.target.value, inv._status === 'authorized')}
-                                                                                                        className="w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-[10px] outline-none focus:ring-1 focus:ring-primary"
-                                                                                                    />
-                                                                                                </td>
-                                                                                                <td className="p-4">
-                                                                                                    <input
-                                                                                                        type="text"
-                                                                                                        value={inv.ref2 || ''}
-                                                                                                        onChange={(e) => handleRef2Change(inv.id, e.target.value, inv._status === 'authorized')}
-                                                                                                        className="w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-[10px] outline-none focus:ring-1 focus:ring-primary"
-                                                                                                    />
-                                                                                                </td>
-                                                                                                <td className="p-4">
-                                                                                                    <input
-                                                                                                        type="text"
-                                                                                                        value={inv.etiqueta || ''}
-                                                                                                        onChange={(e) => handleEtiquetaChange(inv.id, e.target.value, inv._status === 'authorized')}
-                                                                                                        className="w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-[10px] outline-none focus:ring-1 focus:ring-primary"
-                                                                                                    />
-                                                                                                </td>
-                                                                                                {inv.meta?.validationErrors?.[0] || 'Sin UUID / No fiscal'}
+                                                                                                {inv.meta?.validationErrors?.[0] || 'No fiscal'}
                                                                                             </td>
                                                                                             <td className="p-4 text-right font-bold">{formatCurrency(inv.amount)}</td>
                                                                                             <td className="p-4 text-center">
@@ -1553,7 +1645,8 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
                         </main>
                     </div>
                 </>
-            )}
+            )
+            }
 
             {/* Modales */}
             {
@@ -1604,6 +1697,77 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
                     )}
                 </div>
             </Modal>
+
+            {/* Modal genérico de confirmación P3 (reemplaza alert/window.confirm) */}
+            {p3Confirm && (
+                <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-fade-in">
+                    <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 p-6 max-w-sm w-full mx-4">
+                        <div className="flex items-start gap-3 mb-5">
+                            <div className={`p-2 rounded-xl shrink-0 ${p3Confirm.variante === 'danger' ? 'bg-red-50' : p3Confirm.variante === 'info' ? 'bg-blue-50' : 'bg-amber-50'}`}>
+                                {p3Confirm.variante === 'danger'
+                                    ? <Trash2 size={20} className="text-red-500" />
+                                    : p3Confirm.variante === 'info'
+                                        ? <CheckCircle2 size={20} className="text-blue-500" />
+                                        : <AlertTriangle size={20} className="text-amber-500" />}
+                            </div>
+                            <div>
+                                <p className="text-sm font-black text-slate-800">{p3Confirm.titulo}</p>
+                                <p className="text-xs text-slate-500 mt-1 leading-relaxed">{p3Confirm.mensaje}</p>
+                            </div>
+                        </div>
+                        <div className="flex justify-end gap-2">
+                            <button onClick={() => setP3Confirm(null)} className="px-4 py-2 text-xs font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors">
+                                Cancelar
+                            </button>
+                            <button
+                                onClick={() => { p3Confirm.onConfirm(); setP3Confirm(null); }}
+                                className={`px-4 py-2 text-xs font-black text-white rounded-lg transition-colors ${p3Confirm.variante === 'danger' ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}`}
+                            >
+                                Confirmar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Modal cambio de fecha P3 (HU-012) */}
+            {fechaModal && (
+                <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-fade-in">
+                    <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 p-6 max-w-sm w-full mx-4">
+                        <div className="flex items-center gap-3 mb-4">
+                            <div className="p-2 bg-amber-50 rounded-xl shrink-0"><Calendar size={20} className="text-amber-500" /></div>
+                            <div>
+                                <p className="text-sm font-black text-slate-800">Cambiar fecha de pago</p>
+                                <p className="text-[10px] text-slate-400">{fechaModal.providerName}</p>
+                            </div>
+                        </div>
+                        <input
+                            type="date"
+                            value={nuevaFecha}
+                            onChange={e => setNuevaFecha(e.target.value)}
+                            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-primary/20 mb-4"
+                        />
+                        <div className="flex justify-end gap-2">
+                            <button onClick={() => { setFechaModal(null); setNuevaFecha(''); }} className="px-4 py-2 text-xs font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors">
+                                Cancelar
+                            </button>
+                            <button onClick={handleConfirmarCambioFecha} className="px-4 py-2 text-xs font-black text-white bg-amber-500 hover:bg-amber-600 rounded-lg transition-colors flex items-center gap-1.5">
+                                <Calendar size={13} /> Actualizar Fecha
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Toast P3 */}
+            {p3Toast && (
+                <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[300] animate-fade-in">
+                    <div className="bg-slate-800 text-white text-xs font-semibold px-5 py-3 rounded-xl shadow-2xl flex items-center gap-2">
+                        <CheckCircle2 size={15} className="text-emerald-400 shrink-0" />
+                        {p3Toast}
+                    </div>
+                </div>
+            )}
 
         </div >
     );
