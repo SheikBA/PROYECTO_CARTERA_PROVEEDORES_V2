@@ -1,39 +1,137 @@
+// Bancos alineados con SDD §6.2
 export const MOCK_BANKS_META = [
-    { id: 'B-001', name: 'Banamex', account: '90832145' },
-    { id: 'B-002', name: 'BBVA', account: '12345678' },
-    { id: 'B-003', name: 'Santander', account: '98765432' }
+    { id: 'BNX-MXN-01',  name: 'Banamex MXN',   account: 'FOTUR-1234' },
+    { id: 'BNRT-MXN-01', name: 'Banorte MXN',   account: 'FOTUR-2345' },
+    { id: 'SABD-MXN-01', name: 'Sabadell MXN',  account: 'FOTUR-3456' },
+    { id: 'SANT-MXN-01', name: 'Santander MXN', account: 'FOTUR-4567' },
 ];
 
 export const MOCK_GROUPS_META = {
-    'G-001': { name: 'Servicios Públicos' },
-    'G-002': { name: 'Materia Prima' },
-    'G-003': { name: 'Mantenimiento' },
-    'G-004': { name: 'Impuestos' }
+    'A': { name: 'Proveedores Críticos' },
+    'B': { name: 'Servicios Generales' },
+    'C': { name: 'Impuestos y Derechos' },
+    'D': { name: 'Nómina y Prestaciones' },
+    'E': { name: 'GRIF' },
+    'F': { name: 'Intercompañías' },
+    'G': { name: 'Proveedores Extranjeros' },
 };
 
-export const INITIAL_RAW_INVOICES = [
-    { id: 'INV-001', providerName: 'CFE', amount: 5000, currency: 'MXN', dueDate: '2025-10-15', status: 'pending', group: 'G-001', bankId: 'B-001', type: 'Factura' },
-    { id: 'INV-002', providerName: 'Telmex', amount: 1200, currency: 'MXN', dueDate: '2025-10-16', status: 'pending', group: 'G-001', bankId: 'B-001', type: 'Factura' },
-    { id: 'INV-003', providerName: 'Proveedor Aceros SA', amount: 15000, currency: 'MXN', dueDate: '2025-10-20', status: 'pending', group: 'G-002', bankId: 'B-002', type: 'Factura' },
-    { id: 'INV-004', providerName: 'Limpieza Total', amount: 3500, currency: 'MXN', dueDate: '2025-10-18', status: 'pending', group: 'G-003', bankId: 'B-001', type: 'Factura' },
-    { id: 'INV-005', providerName: 'SAT', amount: 45000, currency: 'MXN', dueDate: '2025-10-30', status: 'pending', group: 'G-004', bankId: 'B-003', type: 'Impuesto' }
-];
+export const INITIAL_RAW_INVOICES = [];
 
-export const AVAILABLE_INVOICES = [
-    { uuid: 'UUID-9A8B7C', providerId: 'P-006', providerName: 'Amazon Web Services', company: 'CorpCentral', amount: 45000.00, currency: 'MXN', bank: 'Banamex', account: '**** 1234' },
-    { uuid: 'UUID-1D2E3F', providerId: 'P-007', providerName: 'WeWork Espacios', company: 'CorpCentral', amount: 15000.00, currency: 'MXN', bank: 'Banorte', account: '**** 5678' },
-    { uuid: 'UUID-4G5H6I', providerId: 'P-008', providerName: 'Consultoría Legal SC', company: 'FilialNorte', amount: 22500.00, currency: 'MXN', bank: 'Scotiabank', account: '**** 3456' },
-];
+export const AVAILABLE_INVOICES = [];
 
-export const INITIAL_TRACKING_DATA = [
-    { id: 'TRK-001', date: '2025-08-15', providerName: 'Office Supplies Co.', amount: 1500.00, currency: 'MXN', status: 'Completed', pdfUrl: '/dummy.pdf' },
-    { id: 'TRK-002', date: '2025-09-01', providerName: 'TechSolutions Inc.', amount: 35000.00, currency: 'MXN', status: 'RejectedH2H', pdfUrl: null }
-];
+export const INITIAL_TRACKING_DATA = [];
 
-// Datos mock para el módulo de Configuración de Plantillas
+// Plantillas del módulo Cartera de Proveedores — alineadas con SDD/DDD EP-2829
 export const MOCK_TEMPLATES = [
-    { id: 'TPL-001', name: 'Factura Estándar v2',              type: 'PDF',  status: 'active',   lastModified: '10 Oct 2025' },
-    { id: 'TPL-002', name: 'Recibo Simplificado',              type: 'HTML', status: 'active',   lastModified: '12 Oct 2025' },
-    { id: 'TPL-003', name: 'Comprobante XML',                  type: 'XML',  status: 'draft',    lastModified: '14 Oct 2025' },
-    { id: 'TPL-004', name: 'Factura Proveedor Internacional',  type: 'PDF',  status: 'inactive', lastModified: '01 Sep 2025' },
+    {
+        id: 'TPL-H2H-001',
+        name: 'Layout H2H — Banamex CECOBAN',
+        type: 'TXT',
+        status: 'active',
+        categoria: 'Host-to-Host',
+        banco: 'BANAMEX',
+        descripcion: 'Formato de dispersión CECOBAN para Banamex. Campos: RFC pagador, cuenta destino, monto, referencia numérica.',
+        lastModified: '2026-05-27',
+        version: '3.1',
+    },
+    {
+        id: 'TPL-H2H-002',
+        name: 'Layout H2H — Banorte',
+        type: 'TXT',
+        status: 'active',
+        categoria: 'Host-to-Host',
+        banco: 'BANORTE',
+        descripcion: 'Formato de dispersión Banorte. Requiere referencia alfanumérica: RFC + payment + ID empresa.',
+        lastModified: '2026-05-27',
+        version: '2.4',
+    },
+    {
+        id: 'TPL-H2H-003',
+        name: 'Layout H2H — Sabadell',
+        type: 'TXT',
+        status: 'active',
+        categoria: 'Host-to-Host',
+        banco: 'SABADELL',
+        descripcion: 'Formato SEPA adaptado MX para Sabadell. Moneda MXN únicamente.',
+        lastModified: '2026-05-27',
+        version: '1.8',
+    },
+    {
+        id: 'TPL-H2H-004',
+        name: 'Layout H2H — Santander',
+        type: 'TXT',
+        status: 'active',
+        categoria: 'Host-to-Host',
+        banco: 'SANTANDER',
+        descripcion: 'Formato Santander para dispersión MXN y USD. Incluye campo de tipo de cambio.',
+        lastModified: '2026-05-27',
+        version: '2.0',
+    },
+    {
+        id: 'TPL-COMP-001',
+        name: 'Comprobante de Pago — Correo Proveedor',
+        type: 'HTML',
+        status: 'active',
+        categoria: 'Comprobación',
+        banco: null,
+        descripcion: 'Plantilla de correo con PDF adjunto para envío automático al Kardex del proveedor en Epicor (RN-015).',
+        lastModified: '2026-05-29',
+        version: '1.2',
+    },
+    {
+        id: 'TPL-COMP-002',
+        name: 'Nombre Estándar PDF — RN-012',
+        type: 'PATTERN',
+        status: 'active',
+        categoria: 'Comprobación',
+        banco: null,
+        descripcion: 'Patrón de renombre: {empresa}_{RFC}_{banco}_{payment}.pdf. Aplicado automáticamente en match exitoso.',
+        lastModified: '2026-06-02',
+        version: '1.0',
+    },
+    {
+        id: 'TPL-REF-001',
+        name: 'Referencia Numérica — RN-002',
+        type: 'PATTERN',
+        status: 'active',
+        categoria: 'Referencias',
+        banco: null,
+        descripcion: 'Referencia = payment_id. Aplica a proveedores con referenciación numérica en Epicor.',
+        lastModified: '2026-05-14',
+        version: '1.0',
+    },
+    {
+        id: 'TPL-REF-002',
+        name: 'Referencia Alfanumérica — RN-003',
+        type: 'PATTERN',
+        status: 'active',
+        categoria: 'Referencias',
+        banco: null,
+        descripcion: 'Referencia = RFC + payment_id + ID_corto_empresa. Solo editable permanentemente por Lic. Reyna (INV-003).',
+        lastModified: '2026-05-14',
+        version: '1.0',
+    },
+    {
+        id: 'TPL-KISSFLOW-001',
+        name: 'Webhook Advance Bill — KissFlow',
+        type: 'JSON',
+        status: 'draft',
+        categoria: 'KissFlow',
+        banco: null,
+        descripcion: 'Contrato del webhook entrante KissFlow → sistema. Campos: folio_kissflow, tipo_solicitud, proveedor_id, monto, moneda, empresa_id.',
+        lastModified: '2026-05-28',
+        version: '0.9',
+    },
+    {
+        id: 'TPL-MANUAL-001',
+        name: 'Pagos Especiales — Impuestos / Gobierno',
+        type: 'XLSX',
+        status: 'active',
+        categoria: 'Pago Manual',
+        banco: null,
+        descripcion: 'Formato Excel para pagos manuales a gobierno, impuestos, servicios y bebidas alcohólicas. Requiere validación DLL previa.',
+        lastModified: '2026-05-14',
+        version: '2.2',
+    },
 ];
