@@ -54,6 +54,9 @@ export const CATALOG_GRUPOS_INICIAL = [
     { group: "G", description: "PROVEEDORES EXTRANJEROS" }
 ];
 
+// Fuente única de verdad para la URL del servidor local (python server.py)
+export const API_BASE_URL = 'http://localhost:5000';
+
 /**
  * Objeto unificado para inicializar el estado global en App.jsx
  */

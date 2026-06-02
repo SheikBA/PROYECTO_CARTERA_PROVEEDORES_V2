@@ -4,6 +4,7 @@ import { DESTINOS, CURRENCIES, HS_TOKENS } from '../data/catalogs';
 import { formatCurrency, formatDate } from '../utils/formatters.js';
 import { validarGrupo } from '../services/ValidationService.js';
 import { fraccionar } from '../services/FraccionamientoService.js';
+import { API_BASE_URL } from '../data/catalogs.js';
 import {
     Search, Plus, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Check,
     X, ArrowUpDown, ArrowUp, ArrowDown, Calculator, Users, Download, Eye, ArrowLeft,
@@ -12,8 +13,6 @@ import {
 import Button from '../components/Button';
 import Badge from '../components/Badge';
 import Modal from '../components/Modal';
-
-const API_BASE_URL = 'http://localhost:5000';
 
 // Tokens Hotel Shops
 const HS = {

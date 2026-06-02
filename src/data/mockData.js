@@ -1,26 +1,4 @@
-// Bancos alineados con SDD §6.2
-export const MOCK_BANKS_META = [
-    { id: 'BNX-MXN-01',  name: 'Banamex MXN',   account: 'FOTUR-1234' },
-    { id: 'BNRT-MXN-01', name: 'Banorte MXN',   account: 'FOTUR-2345' },
-    { id: 'SABD-MXN-01', name: 'Sabadell MXN',  account: 'FOTUR-3456' },
-    { id: 'SANT-MXN-01', name: 'Santander MXN', account: 'FOTUR-4567' },
-];
-
-export const MOCK_GROUPS_META = {
-    'A': { name: 'Proveedores Críticos' },
-    'B': { name: 'Servicios Generales' },
-    'C': { name: 'Impuestos y Derechos' },
-    'D': { name: 'Nómina y Prestaciones' },
-    'E': { name: 'GRIF' },
-    'F': { name: 'Intercompañías' },
-    'G': { name: 'Proveedores Extranjeros' },
-};
-
-export const INITIAL_RAW_INVOICES = [];
-
-export const AVAILABLE_INVOICES = [];
-
-export const INITIAL_TRACKING_DATA = [];
+// Bancos y grupos consolidados en catalogs.js — no duplicar aquí.
 
 // Plantillas del módulo Cartera de Proveedores — alineadas con SDD/DDD EP-2829
 export const MOCK_TEMPLATES = [

@@ -1,18 +1,19 @@
 import { useState } from 'react';
-
-const API_BASE_URL = 'http://localhost:5000';
 import { Upload, FileSpreadsheet, AlertCircle, CheckCircle2, Save, Trash2, Database } from 'lucide-react';
+import { API_BASE_URL } from '../data/catalogs.js';
 import Button from '../components/Button';
 import Card from '../components/Card';
 import { parseExcelFile } from './excelReader';
-import { sp_process_invoice_data } from '../logic/Reglas_Negocio';
 import { invoicesArraySchema } from './invoiceSchema';
+import { formatCurrency, formatDate } from '../utils/formatters.js';
 
 const DataLoad = ({ setRawInvoices, setCurrentModule }) => {
     const [previewData, setPreviewData] = useState([]);
     const [error, setError] = useState(null);
     const [loading, setLoading] = useState(false);
     const [fileName, setFileName] = useState('');
+    const [successMsg, setSuccessMsg] = useState(null);
+    const showSuccess = (msg) => { setSuccessMsg(msg); setTimeout(() => setSuccessMsg(null), 3500); };
 
     const handleFileUpload = async (e) => {
         const file = e.target.files[0];
@@ -26,15 +27,12 @@ const DataLoad = ({ setRawInvoices, setCurrentModule }) => {
             // 1. Leer Excel
             const rawData = await parseExcelFile(file);
 
-            // 2. Procesar con Reglas de Negocio (Mapeo a estructura interna)
-            // Es vital procesar aquí para generar bankId y meta, de lo contrario no se verán en Pagos V2
-            const processedData = rawData.map(row => sp_process_invoice_data(row));
-
-            // 3. Validar con Zod los datos ya procesados
-            const result = invoicesArraySchema.safeParse(processedData);
+            // 2. Validar y Transformar con Zod
+            // El esquema ya invoca sp_process_invoice_data automáticamente via .transform()
+            const result = invoicesArraySchema.safeParse(rawData);
 
             if (result.success) {
-                setPreviewData(processedData);
+                setPreviewData(result.data);
             } else { // El mensaje de error ahora es más genérico y útil
                 console.error("Error de validación Zod:", result.error);
 
@@ -68,15 +66,12 @@ const DataLoad = ({ setRawInvoices, setCurrentModule }) => {
                 throw new Error(jsonData.error || "Error de conexión con el servidor local.");
             }
 
-            // PROCESAMIENTO CRÍTICO: Mapear cada fila del Excel a través de las Reglas de Negocio
-            const processedData = jsonData.map(row => sp_process_invoice_data(row));
-
-            // Validamos los datos ya procesados
-            const result = invoicesArraySchema.safeParse(processedData);
+            // Validamos y transformamos los datos crudos del servidor
+            const result = invoicesArraySchema.safeParse(jsonData);
 
             if (result.success) {
-                setPreviewData(processedData);
-                setFileName(`Sincronización Local: ${jsonData.length} registros encontrados en disco.`);
+                setPreviewData(result.data);
+                setFileName(`Sincronización Local: ${result.data.length} registros encontrados en disco.`);
             } else {
                 const firstError = result.error.issues[0]?.message || "Error de formato en datos locales";
                 setError(`Error de validación: ${firstError}`);
@@ -98,7 +93,7 @@ const DataLoad = ({ setRawInvoices, setCurrentModule }) => {
 
         setRawInvoices(prev => [...prev, ...previewData]);
 
-        alert(`${previewData.length} registros importados correctamente.`);
+        showSuccess(`${previewData.length} registros importados correctamente.`);
         setPreviewData([]);
         setFileName('');
 
@@ -190,13 +185,22 @@ const DataLoad = ({ setRawInvoices, setCurrentModule }) => {
                                         </td>
                                         <td className="p-3 font-mono text-xs text-slate-400">{r.uuid?.slice(0, 8)}...</td>
                                         <td className="p-3 font-medium text-slate-800">{r.providerName}</td>
-                                        <td className="p-3 text-right font-bold text-slate-700">{r.amount.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</td>
+                                        <td className="p-3 text-right font-bold text-slate-700">{formatCurrency(r.amount, r.currency)}</td>
                                         <td className="p-3 text-center"><span className="font-bold text-xs bg-slate-200 text-slate-600 px-2 py-1 rounded-full">{r.currency}</span></td>
-                                        <td className="p-3 text-slate-500">{r.dueDate}</td>
+                                        <td className="p-3 text-slate-500">{formatDate(r.dueDate)}</td>
                                     </tr>
                                 ))}
                             </tbody>
                         </table>
+                    </div>
+                </div>
+            )}
+
+            {successMsg && (
+                <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[200] animate-fade-in">
+                    <div className="bg-slate-800 text-white text-xs font-semibold px-5 py-3 rounded-xl shadow-2xl flex items-center gap-2">
+                        <CheckCircle2 size={15} className="text-emerald-400 shrink-0" />
+                        {successMsg}
                     </div>
                 </div>
             )}

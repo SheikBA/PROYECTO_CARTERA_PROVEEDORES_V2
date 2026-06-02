@@ -87,8 +87,8 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
     const handleRef1Change = (id, val) => updateInvoiceProperty(id, 'ref1', val);
     const handleRef2Change = (id, val) => updateInvoiceProperty(id, 'ref2', val);
     const handleEtiquetaChange = (id, val) => updateInvoiceProperty(id, 'etiqueta', val);
-    const handlePayInvoices = (invoices) => alert(`Procesando pago de ${invoices.length} facturas...`);
-    const handleRejectProviderGroup = (name) => alert(`Rechazando grupo: ${name}`);
+    const handlePayInvoices = (invoices) => showP3Toast(`${invoices.length} factura(s) enviadas a procesamiento.`);
+    const handleRejectProviderGroup = (name) => showP3Toast(`Grupo "${name}" enviado a Pagos Rechazados.`);
 
     // Estados para el detalle de KPIs en vista Autorizados
     const [selectedBankKpi, setSelectedBankKpi] = useState(null);
@@ -671,7 +671,7 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
             (inv.meta?.paymentMethod || (inv.meta?.isH2H ? 'H2H' : 'Manual')) === 'H2H'
         );
 
-        if (h2hInvoices.length === 0) return alert("No hay facturas marcadas con ruta H2H para procesar.");
+        if (h2hInvoices.length === 0) { showP3Toast('No hay facturas marcadas con ruta H2H para procesar.'); return; }
 
         // Agrupación por Proveedor para el Template H2H
         const templateH2H = h2hInvoices.reduce((acc, inv) => {
@@ -1094,7 +1094,7 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
                             <p className="text-xs font-bold text-slate-700">Se enviarán a procesar {filteredAuthorized.length} documentos.</p>
                         </div>
                         <div className="flex items-center gap-3">
-                            <Button variant="secondary" icon={X} onClick={() => alert("Función para desarmar grupos en desarrollo.")}>Cerrar Día</Button>
+                            <Button variant="secondary" icon={X} onClick={() => showP3Toast('Función Cerrar Día disponible en próximo release.')}>Cerrar Día</Button>
                             <Button variant="primary" icon={Send} onClick={handleSendH2H} className="bg-gradient-to-r from-indigo-600 to-blue-600 animate-pulse border-none">Enviar Pagos H2H</Button>
                         </div>
                     </div>
