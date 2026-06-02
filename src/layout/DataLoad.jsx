@@ -33,18 +33,13 @@ const DataLoad = ({ setRawInvoices, setCurrentModule }) => {
 
             if (result.success) {
                 setPreviewData(result.data);
-            } else { // El mensaje de error ahora es más genérico y útil
-                console.error("Error de validación Zod:", result.error);
-
-                // Diagnóstico para el usuario: Mostrar qué columnas se encontraron
+            } else {
                 const detectedKeys = rawData.length > 0 ? Object.keys(rawData[0]).join(", ") : "Ninguna columna detectada";
                 const firstError = result.error.issues[0]?.message || "Error de formato";
-
                 setError(`Error: ${firstError}. Columnas detectadas en tu archivo: [${detectedKeys}].`);
-                setPreviewData([]); // Limpiamos la previsualización si hay error
+                setPreviewData([]);
             }
-        } catch (err) {
-            console.error(err);
+        } catch (_err) {
             setError("Error crítico al procesar el archivo.");
         } finally {
             setLoading(false);
@@ -77,7 +72,6 @@ const DataLoad = ({ setRawInvoices, setCurrentModule }) => {
                 setError(`Error de validación: ${firstError}`);
             }
         } catch (err) {
-            console.error(err);
             if (err instanceof TypeError && err.message.includes('Failed to fetch')) {
                 setError(`Error de Conexión: No se pudo contactar al servidor en ${API_BASE_URL}. Asegúrate de que el script 'python server.py' se está ejecutando en una terminal separada y no muestra errores.`);
             } else {

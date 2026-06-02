@@ -1,8 +1,9 @@
 import { useState, useMemo } from 'react';
-import { ShieldAlert, History, Download, Search, Filter, Calendar, Printer, Building2, User, ChevronLeft, ChevronRight, Landmark } from 'lucide-react';
+import { ShieldAlert, History, Download, Search, Filter, Calendar, Printer, User, ChevronLeft, ChevronRight } from 'lucide-react';
 import Card from '../components/Card';
 import Button from '../components/Button';
 import Badge from '../components/Badge';
+import { formatCurrency, formatDate } from '../utils/formatters.js';
 
 const PAGE_SIZE = 15;
 
@@ -12,8 +13,6 @@ const Reports = ({ rejectedInvoices, trackingData }) => {
     const [dateFilter, setDateFilter] = useState('');
     const [rejectedPage, setRejectedPage] = useState(1);
     const [changelogPage, setChangelogPage] = useState(1);
-
-    const formatCurrency = (amount) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(amount || 0);
 
     // --- Reporte 1: Facturas Rechazadas ---
     const filteredRejected = useMemo(() => {
@@ -69,7 +68,7 @@ const Reports = ({ rejectedInvoices, trackingData }) => {
         if (activeTab === 'rejected') {
             csv = 'Fecha Rechazo,Factura,Proveedor,Monto,Tipo,Rechazado Por\n';
             filteredRejected.forEach(inv => {
-                const fecha = inv.rejectedAt ? new Date(inv.rejectedAt).toLocaleString('es-MX') : 'N/A';
+                const fecha = formatDate(inv.rejectedAt) || 'N/A';
                 const factura = inv.meta?.invoice ?? '';
                 const prov = inv.providerName ?? '';
                 const monto = inv.amount ?? 0;
@@ -80,7 +79,7 @@ const Reports = ({ rejectedInvoices, trackingData }) => {
         } else {
             csv = 'Fecha/Hora,Usuario,Evento,Factura,Proveedor,Detalle\n';
             changeLog.forEach(log => {
-                const fecha = log.timestamp ? new Date(log.timestamp).toLocaleString('es-MX') : '';
+                const fecha = formatDate(log.timestamp) || '';
                 const usuario = log.user ?? 'Sistema';
                 const evento = log.event ?? '';
                 const factura = log.invoice ?? '';
@@ -217,7 +216,7 @@ const Reports = ({ rejectedInvoices, trackingData }) => {
                                 {paginatedRejected.length > 0 ? paginatedRejected.map((inv, idx) => (
                                     <tr key={idx} className="hover:bg-slate-50/50">
                                         <td className="p-4 font-medium text-slate-600">
-                                            {inv.rejectedAt ? new Date(inv.rejectedAt).toLocaleString('es-MX') : 'N/A'}
+                                            {formatDate(inv.rejectedAt) || 'N/A'}
                                         </td>
                                         <td className="p-4 font-bold text-slate-700">{inv.meta?.invoice}</td>
                                         <td className="p-4 text-slate-600">{inv.providerName}</td>
@@ -261,7 +260,7 @@ const Reports = ({ rejectedInvoices, trackingData }) => {
                                 {paginatedChangelog.length > 0 ? paginatedChangelog.map((log, idx) => (
                                     <tr key={idx} className="hover:bg-slate-50/50">
                                         <td className="p-4 font-mono text-xs text-slate-500">
-                                            {new Date(log.timestamp).toLocaleString('es-MX')}
+                                            {formatDate(log.timestamp)}
                                         </td>
                                         <td className="p-4">
                                             <div className="flex items-center gap-2">

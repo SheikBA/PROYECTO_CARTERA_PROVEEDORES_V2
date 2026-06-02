@@ -1,22 +1,33 @@
 // src/layout/menuItems.js
-// Fuente única de verdad para la configuración del menú lateral
-// Importar DEFAULT_MENU_ITEMS desde aquí en App.jsx
+// Fuente unica de verdad para la configuracion del menu lateral.
+// Importar DEFAULT_MENU_ITEMS desde aqui en App.jsx.
 
-import { DollarSign, CheckCircle2, ShieldAlert, FileText, Database, Layout, Layers, GitMerge } from 'lucide-react';
+import {
+    Layers,
+    GitMerge,
+    CheckCircle2,
+    Landmark,
+    ShieldAlert,
+    History,
+    Upload,
+    FileText,
+    Package,
+} from 'lucide-react';
 
 export const DEFAULT_MENU_ITEMS = [
-    { id: 'dataload',            label: 'Carga de Datos',       icon: Database },
-    { id: 'payments',            label: 'Gestión de Pagos',     icon: DollarSign },
-    { id: 'payments-v2',         label: 'Gestión Pagos V2',     icon: Layers },
-    { id: 'multi-batch',         label: 'Multi Propuestas',     icon: GitMerge },
-    { id: 'authorized-payments', label: 'Pagos',    icon: CheckCircle2 },
+    { id: 'payments-v2',          label: 'Gestión de Pagos',           icon: Layers },
+    { id: 'authorized-payments',  label: 'Pagos Autorizados',          icon: CheckCircle2 },
+    { id: 'payment-verification', label: 'Comprobación de Pagos',      icon: Landmark },
     {
-        id: 'rejected-payments', label: 'Pagos Rechazados',     icon: ShieldAlert,
+        id: 'rejected-parent', label: 'Pagos Rechazados', icon: ShieldAlert,
         subItems: [
-            { id: 'rejected-h2h',     label: 'Pagos Rechazados H2H' },
-            { id: 'rejected-general', label: 'Pagos Rechazados General' },
-        ]
+            { id: 'rejected-h2h',     label: 'Rechazados H2H' },
+            { id: 'rejected-general', label: 'Rechazados General' },
+        ],
     },
-    { id: 'reports',    label: 'Reportería',            icon: FileText },
-    { id: 'templates',  label: 'Configuración Plantillas', icon: Layout },
+    { id: 'multi-batch',          label: 'Multi Propuestas',           icon: GitMerge },
+    { id: 'batch-management',     label: 'Gestión de Lotes',           icon: Package },
+    { id: 'reports',              label: 'Reportería',                 icon: History },
+    { id: 'dataload',             label: 'Carga de Datos',             icon: Upload },
+    { id: 'templates',            label: 'Plantillas',                 icon: FileText },
 ];

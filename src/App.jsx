@@ -8,9 +8,11 @@ import PaymentsV2 from './pages/PaymentsV2';
 import MultiBatch from './pages/MultiBatch';
 import Templates from './pages/Templates';
 import PaymentVerification from './pages/PaymentVerification';
+import AuthorizedPayments from './pages/AuthorizedPayments';
+import BatchManagement from './pages/BatchManagement';
 import { Briefcase } from 'lucide-react';
 import { DEFAULT_MENU_ITEMS } from './layout/menuItems';
-import { CATALOG_BANCOS_INICIAL, CATALOG_GRUPOS_INICIAL } from './data/catalogs';
+import { CATALOG_BANCOS_INICIAL, CATALOG_GRUPOS_INICIAL, CATALOG_COMPANIAS_INICIAL } from './data/catalogs';
 
 const App = () => {
   // Estado de la sesión (simulado)
@@ -34,7 +36,7 @@ const App = () => {
   // Estado para catálogos dinámicos — inicializados desde catalogs.js
   const [catalogs, setCatalogs] = useState({
     banks: CATALOG_BANCOS_INICIAL,
-    companies: [],
+    companies: CATALOG_COMPANIAS_INICIAL,
     groups: CATALOG_GRUPOS_INICIAL,
   });
 
@@ -53,8 +55,8 @@ const App = () => {
         if (batch) setActiveBatch(batch);
         const savedBatchList = localStorage.getItem('cartera_batch_list');
         if (savedBatchList) setBatchList(JSON.parse(savedBatchList));
-      } catch (e) {
-        console.error("Error cargando caché local", e);
+      } catch (_e) {
+        // caché local corrupto — continuar con estado vacío
       }
     }
   }, []);
@@ -72,8 +74,8 @@ const App = () => {
     };
     try {
       localStorage.setItem('cartera_app_cache', JSON.stringify(dataToSave));
-    } catch (e) {
-      console.warn("El volumen de datos es demasiado grande para el caché local. Los cambios no se persistirán al refrescar.");
+    } catch (_e) {
+      // cuota localStorage excedida — datos no persistidos en esta sesión
     }
   }, [rawInvoices, authorizedInvoices, finalizedInvoices, rejectedInvoices, trackingData, catalogs, activeBatch]);
 
@@ -146,22 +148,20 @@ const App = () => {
 
       case 'authorized-payments':
         return (
-          <Payments
-            rawInvoices={finalizedInvoices}
-            setRawInvoices={setFinalizedInvoices}
-            setProposalInvoices={setRawInvoices}
-            authorizedInvoices={authorizedInvoices}
-            setAuthorizedInvoices={setAuthorizedInvoices}
-            setRejectedInvoices={setRejectedInvoices}
-            availableInvoices={availableInvoices}
-            setAvailableInvoices={setAvailableInvoices}
-            trackingData={trackingData}
-            setTrackingData={setTrackingData}
-            catalogs={catalogs}
+          <AuthorizedPayments
+            finalizedInvoices={finalizedInvoices}
             activeBatch={activeBatch}
-            setActiveBatch={setActiveBatch}
+            catalogs={catalogs}
+          />
+        );
+
+      case 'batch-management':
+        return (
+          <BatchManagement
+            batches={batchList}
+            setBatches={setBatchList}
+            setFinalizedInvoices={setFinalizedInvoices}
             currentUser={currentUser}
-            mode="authorized"
           />
         );
 
