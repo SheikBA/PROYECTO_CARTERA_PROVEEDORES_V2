@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Search, Download, DollarSign, Clock, CheckCircle2, ChevronRight, ChevronLeft, ArrowLeft, RefreshCw, Building2, Layers, Users, X, Plus, ArrowRightLeft, Briefcase, FileText, ShieldAlert, ChevronUp, ChevronDown, Lock, Landmark, Send, PanelLeftClose, PanelLeftOpen, AlertTriangle, Calendar, Trash2 } from 'lucide-react';
+import { Search, Download, DollarSign, Clock, CheckCircle2, ChevronRight, ChevronLeft, ArrowLeft, RefreshCw, Building2, Layers, Users, X, Plus, ArrowRightLeft, Briefcase, FileText, ShieldAlert, ChevronUp, ChevronDown, Lock, Landmark, Send, PanelLeftClose, PanelLeftOpen, AlertTriangle, Calendar, Trash2, Unlock, List, FileSpreadsheet } from 'lucide-react';
 import Button from '../components/Button';
 import Card from '../components/Card';
 import Badge from '../components/Badge';
@@ -472,6 +472,35 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
         }
     };
 
+    const handleLiberar = (inv) => {
+        showP3Confirm(
+            'Liberar factura',
+            `¿Liberar la factura "${inv.meta?.invoice || inv.id}"? Será excluida de la tabla de facturas.`,
+            () => {
+                setRawInvoices(prev => (prev || []).filter(i => i.id !== inv.id));
+                if (setAuthorizedInvoices) setAuthorizedInvoices(prev => (prev || []).filter(i => i.id !== inv.id));
+                showP3Toast('Factura liberada.');
+            },
+            'warning'
+        );
+    };
+
+    const handleLiberarTodo = () => {
+        const allInvoices = selectedProvider?.invoices || [];
+        if (allInvoices.length === 0) { showP3Toast('No hay facturas para liberar.'); return; }
+        showP3Confirm(
+            'Liberar todas las facturas',
+            `¿Liberar las ${allInvoices.length} factura(s) de "${selectedProvider?.name}"? Serán excluidas de la tabla.`,
+            () => {
+                const ids = allInvoices.map(i => i.id);
+                setRawInvoices(prev => (prev || []).filter(i => !ids.includes(i.id)));
+                if (setAuthorizedInvoices) setAuthorizedInvoices(prev => (prev || []).filter(i => !ids.includes(i.id)));
+                showP3Toast(`${allInvoices.length} factura(s) liberadas.`);
+            },
+            'warning'
+        );
+    };
+
     // Modal Search handler
     const handleSearchInvoice = () => {
         const found = (availableInvoices || []).find(inv => inv.uuid === searchUuid);
@@ -911,7 +940,7 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
         return (
             <div className="p-6 h-full flex flex-col gap-4 animate-fade-in-up overflow-y-auto bg-slate-50/50">
                 <div className="shrink-0 flex items-center justify-between">
-                    <div>
+                    <div className="hidden">
                         <h1 className="text-2xl font-black text-slate-800 tracking-tight uppercase">Propuesta de Pagos – Tesorería</h1>
                         <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Control de dispersión y métodos de pago</p>
                     </div>
@@ -1079,7 +1108,7 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
                                                 />
                                             </td>
                                             <td className="px-4 py-4 text-slate-600">
-                                                {inv.meta?.pais || inv.meta?.destino || '—'}
+                                                {inv.pais || '—'}
                                             </td>
                                             <td className="px-4 py-4 text-center"><Badge status="valid">LISTO</Badge></td>
                                         </tr>
@@ -1138,10 +1167,10 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
             {isAuthorized ? renderAuthorizedView() : (
                 <>
                     <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 shrink-0">
-                        <div className="flex items-center">
+                        <div className="hidden">
                             <div>
                                 <h1 className="text-2xl font-black text-slate-800 tracking-tight uppercase">
-                                    {isProposal ? 'Gestión de Pagos' : isAuthorized ? 'Pagos Autorizados' : 'Historial de Rechazos'}
+                                    {isProposal ? 'Gestión de Pagos' : isAuthorized ? 'Pagos' : 'Historial de Rechazos'}
                                 </h1>
                                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
                                     {isProposal ? 'Etapa 1: Refinamiento y autorización.' : 'Etapa 2: Control de dispersión.'}
@@ -1347,11 +1376,39 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
                                                 </div>
                                             ) : (
                                                 <div className="flex flex-col sm:flex-row items-center justify-between gap-4 w-full">
-                                                    <div className="flex items-center gap-2">
-                                                        <Button variant="secondary" icon={Download} size="sm" disabled={isProposal && isLocked}>Exportar</Button>
-                                                        {isProposal && !isLocked && <Button variant="dark" icon={Plus} size="sm" onClick={() => setIsAddModalOpen(true)}>Añadir Factura</Button>}
+                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                        {isProposal && !isLocked && (
+                                                            <>
+                                                                <button
+                                                                    onClick={() => showP3Confirm('Liberar todo', `¿Liberar todas las facturas de la propuesta? Serán excluidas de la tabla.`, () => { setRawInvoices([]); if (setAuthorizedInvoices) setAuthorizedInvoices([]); showP3Toast('Todas las facturas liberadas.'); }, 'warning')}
+                                                                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-all"
+                                                                    title="Liberar todas las facturas"
+                                                                >
+                                                                    <Unlock size={14} /> Liberar todo
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => handleAuthorize(rawInvoices)}
+                                                                    disabled={(rawInvoices || []).length === 0}
+                                                                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                                                                    title="Añadir todas las facturas"
+                                                                >
+                                                                    <CheckCircle2 size={14} /> Añadir todo
+                                                                </button>
+                                                            </>
+                                                        )}
+                                                        <Button variant="secondary" icon={FileSpreadsheet} size="sm" disabled={isProposal && isLocked} title="Exportar a Excel">Excel</Button>
+                                                        {isProposal && !isLocked && (
+                                                            <Button variant="dark" icon={Plus} size="sm" onClick={() => setIsAddModalOpen(true)} title="Agregar factura manualmente">Agregar factura</Button>
+                                                        )}
+                                                        <button
+                                                            onClick={() => setShowGroupsView(true)}
+                                                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-600 bg-slate-50 border border-slate-200 rounded-lg hover:bg-slate-100 transition-all"
+                                                            title="Ver lista de batches"
+                                                        >
+                                                            <List size={14} /> Lista Batch
+                                                        </button>
                                                     </div>
-                                                    <div className="relative w-full sm:w-80">
+                                                    <div className="relative w-full sm:w-72">
                                                         <Search size={18} className="absolute left-3 top-2.5 text-slate-400" />
                                                         <input type="text" placeholder="Buscar en todos los niveles..." className="block w-full pl-10 pr-3 py-2 border border-slate-200 rounded-lg bg-slate-50 focus:bg-white text-sm outline-none" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
                                                     </div>
@@ -1461,6 +1518,32 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
 
                                                     return (
                                                         <div className="space-y-8 animate-fade-in pb-12 max-w-7xl mx-auto">
+                                                            {/* TOOLBAR NIVEL 4 — Acciones masivas sobre facturas del proveedor */}
+                                                            {isProposal && !isLocked && (
+                                                                <div className="flex items-center gap-2 flex-wrap bg-white border border-slate-200 rounded-xl px-4 py-2.5 shadow-sm">
+                                                                    <button
+                                                                        onClick={handleLiberarTodo}
+                                                                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-all"
+                                                                    >
+                                                                        <Unlock size={14} /> Liberar todo
+                                                                    </button>
+                                                                    <button
+                                                                        onClick={() => handleAuthorize(selectedProvider?.invoices || [])}
+                                                                        disabled={(selectedProvider?.invoices || []).length === 0}
+                                                                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                                                                    >
+                                                                        <CheckCircle2 size={14} /> Añadir todo
+                                                                    </button>
+                                                                    <Button variant="secondary" icon={FileSpreadsheet} size="sm">Excel</Button>
+                                                                    <Button variant="dark" icon={Plus} size="sm" onClick={() => setIsAddModalOpen(true)}>Agregar factura</Button>
+                                                                    <button
+                                                                        onClick={() => setShowGroupsView(true)}
+                                                                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-600 bg-slate-50 border border-slate-200 rounded-lg hover:bg-slate-100 transition-all"
+                                                                    >
+                                                                        <List size={14} /> Lista Batch
+                                                                    </button>
+                                                                </div>
+                                                            )}
                                                             {/* SECCIÓN FISCALES */}
                                                             <div className="space-y-3">
                                                                 <div className="flex justify-between items-center mb-2">
@@ -1519,17 +1602,18 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
                                                                                         <td className="p-4">{inv.etiqueta || '—'}</td>
                                                                                         <td className="p-4 text-right font-bold">{formatCurrency(inv.amount)}</td>
                                                                                         <td className="p-4 text-center">
-                                                                                            <div className="flex justify-center gap-2">
+                                                                                            <div className="flex justify-center items-center gap-1">
                                                                                                 {isAuthorized ? (
-                                                                                                    <button onClick={() => handlePayInvoices([inv])} className="flex items-center gap-1 px-3 py-1 bg-emerald-600 text-white text-[9px] font-black rounded hover:bg-emerald-700 transition-all shadow-sm uppercase tracking-tighter">
+                                                                                                    <button onClick={() => handlePayInvoices([inv])} className="flex items-center gap-1 px-2 py-1 bg-emerald-600 text-white text-[9px] font-black rounded hover:bg-emerald-700 transition-all shadow-sm uppercase tracking-tighter">
                                                                                                         <DollarSign size={12} /> PAGAR
                                                                                                     </button>
                                                                                                 ) : inv._status === 'authorized' ? (
                                                                                                     <Badge status="success">AUTORIZADO</Badge>
                                                                                                 ) : (
                                                                                                     <>
-                                                                                                        <button onClick={() => handleAuthorize([inv])} className="p-1.5 bg-emerald-50 text-emerald-600 rounded-md hover:bg-emerald-600 hover:text-white transition-colors"><CheckCircle2 size={14} /></button>
-                                                                                                        <button onClick={() => handleReject([inv])} className="p-1.5 bg-red-50 text-red-600 rounded-md hover:bg-red-600 hover:text-white transition-colors"><X size={14} /></button>
+                                                                                                        <button onClick={() => handleAuthorize([inv])} className="p-1.5 bg-emerald-50 text-emerald-600 rounded-md hover:bg-emerald-600 hover:text-white transition-colors" title="Autorizar"><CheckCircle2 size={14} /></button>
+                                                                                                        <button onClick={() => handleReject([inv])} className="p-1.5 bg-red-50 text-red-600 rounded-md hover:bg-red-600 hover:text-white transition-colors" title="Rechazar"><X size={14} /></button>
+                                                                                                        <button onClick={() => handleLiberar(inv)} className="p-1.5 bg-amber-50 text-amber-600 rounded-md hover:bg-amber-500 hover:text-white transition-colors" title="Liberar factura"><Unlock size={14} /></button>
                                                                                                     </>
                                                                                                 )}
                                                                                             </div>
@@ -1607,9 +1691,9 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
                                                                                             </td>
                                                                                             <td className="p-4 text-right font-bold">{formatCurrency(inv.amount)}</td>
                                                                                             <td className="p-4 text-center">
-                                                                                                <div className="flex justify-center gap-2">
+                                                                                                <div className="flex justify-center items-center gap-1">
                                                                                                     {isAuthorized ? (
-                                                                                                        <button onClick={() => handlePayInvoices([inv])} className="flex items-center gap-1 px-3 py-1 bg-emerald-600 text-white text-[9px] font-black rounded hover:bg-emerald-700 transition-all shadow-sm uppercase tracking-tighter">
+                                                                                                        <button onClick={() => handlePayInvoices([inv])} className="flex items-center gap-1 px-2 py-1 bg-emerald-600 text-white text-[9px] font-black rounded hover:bg-emerald-700 transition-all shadow-sm uppercase tracking-tighter">
                                                                                                             <DollarSign size={12} /> PAGAR
                                                                                                         </button>
                                                                                                     ) : inv._status === 'authorized' ? (
@@ -1618,6 +1702,7 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
                                                                                                         <>
                                                                                                             <button onClick={() => handleAuthorize([inv])} className="p-1.5 bg-emerald-50 text-emerald-600 rounded-md hover:bg-emerald-600 hover:text-white transition-colors" title="Autorizar"><CheckCircle2 size={14} /></button>
                                                                                                             <button onClick={() => handleReject([inv])} className="p-1.5 bg-red-50 text-red-600 rounded-md hover:bg-red-600 hover:text-white transition-colors" title="Rechazar"><X size={14} /></button>
+                                                                                                            <button onClick={() => handleLiberar(inv)} className="p-1.5 bg-amber-50 text-amber-600 rounded-md hover:bg-amber-500 hover:text-white transition-colors" title="Liberar factura"><Unlock size={14} /></button>
                                                                                                         </>
                                                                                                     )}
                                                                                                 </div>
@@ -1678,7 +1763,7 @@ const Payments = ({ rawInvoices, setRawInvoices, setProposalInvoices, authorized
                             onChange={(e) => setSearchUuid(e.target.value)}
                             onKeyDown={(e) => e.key === 'Enter' && handleSearchInvoice()}
                         />
-                        <Button variant="primary" icon={Search} onClick={handleSearchInvoice}>Buscar</Button>
+                        <Button variant="success" icon={Search} onClick={handleSearchInvoice}>Buscar</Button>
                     </div>
                     {searchResult ? (
                         <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-lg space-y-2">

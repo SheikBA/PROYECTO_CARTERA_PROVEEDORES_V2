@@ -27,7 +27,7 @@ const Modal = ({ isOpen, onClose, title, children, footer, size = 'md' }) => {
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 animate-fade-in bg-slate-900/40 backdrop-blur-sm">
             <div 
-                className={`bg-surface w-full ${sizeClasses[size]} rounded-2xl shadow-2xl flex flex-col max-h-[90vh] animate-fade-in-up border border-slate-200 overflow-hidden`}
+                className={`hs-modal-panel bg-surface w-full ${sizeClasses[size]} rounded-2xl shadow-2xl flex flex-col max-h-[90vh] animate-fade-in-up border border-slate-200 overflow-hidden`}
                 onClick={e => e.stopPropagation()} // Prevent close when clicking inside
             >
                 {/* Header */}

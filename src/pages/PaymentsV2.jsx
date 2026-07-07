@@ -2,13 +2,15 @@ import React, { useState, useMemo, useRef, useEffect, useCallback, memo } from '
 import { invoicesArraySchema } from '../layout/invoiceSchema';
 import { DESTINOS, CURRENCIES, HS_TOKENS } from '../data/catalogs';
 import { formatCurrency, formatDate } from '../utils/formatters.js';
+import { BALANCE_VALIDATION_STAGES, formatBalanceValidationMessage, getBalanceValidationHit } from '../utils/balanceValidation.js';
 import { validarGrupo } from '../services/ValidationService.js';
 import { fraccionar } from '../services/FraccionamientoService.js';
 import { API_BASE_URL } from '../data/catalogs.js';
 import {
     Search, Plus, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Check,
     X, ArrowUpDown, ArrowUp, ArrowDown, Calculator, Users, Download, Eye, ArrowLeft,
-    FileSpreadsheet, ShieldAlert, RefreshCw, CheckCircle2, Lock, Filter, BarChart3, Maximize2, Minimize2, Layers, Save, Landmark, AlertTriangle, Send
+    FileSpreadsheet, ShieldAlert, RefreshCw, CheckCircle2, Lock, Filter, BarChart3, Maximize2, Minimize2, Layers, Save, Landmark, AlertTriangle, Send,
+    Archive, Clock, Pencil, Trash2
 } from 'lucide-react';
 import Button from '../components/Button';
 import Badge from '../components/Badge';
@@ -203,7 +205,10 @@ const PaymentsV2 = ({
     const [page, setPage] = useState(1);
     const [isHeaderOpen, setIsHeaderOpen] = useState(true);
     const [sortConfig, setSortConfig] = useState({ key: 'dueDate', direction: 'asc' });
-    const [exchangeRate, setExchangeRate] = useState(18.50);
+    const [exchangeRate, setExchangeRate] = useState(() => {
+        const saved = localStorage.getItem('hs_exchange_rate');
+        return saved ? parseFloat(saved) : 18.50;
+    });
 
     // Estados para la vista de Autorizados
     const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
@@ -225,8 +230,13 @@ const PaymentsV2 = ({
     const [confirmDialog, setConfirmDialog] = useState(null);
     // { message, onConfirm }
 
-    const showConfirm = (message, onConfirm) => {
-        setConfirmDialog({ message, onConfirm });
+    const showConfirm = (message, onConfirm, options = {}) => {
+        setConfirmDialog({
+            message,
+            onConfirm,
+            onCancel: options.onCancel,
+            confirmLabel: options.confirmLabel,
+        });
     };
 
     // Toast de éxito (reemplaza alert)
@@ -247,6 +257,13 @@ const PaymentsV2 = ({
     const [pendingFilters, setPendingFilters] = useState(EMPTY_FILTERS);
     const [appliedFilters, setAppliedFilters] = useState(EMPTY_FILTERS);
 
+    // Helper: Extraer código de formato "código | descripción" o devolver el valor original
+    const extractCode = (value) => {
+        if (!value) return value;
+        const parts = String(value).split('|');
+        return parts.length > 1 ? parts[0].trim() : value;
+    };
+
     // --- LÓGICA DE FILTROS DINÁMICOS (CASCADA) ---
     const dynamicOptions = useMemo(() => {
         // Mitigación: Aseguramos que data sea un array y no contenga nulos
@@ -262,10 +279,45 @@ const PaymentsV2 = ({
         };
 
         // Cascada: cada nivel filtra al siguiente
-        const destinos = getUnique(data, 'pais');
+        // Detectar dónde está el campo de país/destino (intentar varias ubicaciones)
+        let destinoField = 'destino';
+        let destinos = getUnique(data, destinoField);
+
+        if (destinos.length === 0) {
+            destinoField = 'meta.destino';
+            destinos = getUnique(data, destinoField);
+        }
+        if (destinos.length === 0) {
+            destinoField = 'meta.PAIS';
+            destinos = getUnique(data, destinoField);
+        }
+        if (destinos.length === 0) {
+            destinoField = 'meta.pais';
+            destinos = getUnique(data, destinoField);
+        }
+        if (destinos.length === 0) {
+            destinoField = 'meta.country';
+            destinos = getUnique(data, destinoField);
+        }
+
+        if (destinos.length === 0) {
+            console.warn('⚠️ No se encontraron destinos/países. Primeros registros:', data.slice(0, 2));
+        } else {
+            console.log('✓ Destinos encontrados en campo:', destinoField, 'Total:', destinos.length, 'Valores:', destinos);
+        }
+
+        // Usar el campo detectado para filtros en cascada
+        const getDestinValue = (item) => {
+            if (destinoField === 'destino') return item?.destino;
+            if (destinoField === 'meta.destino') return item?.meta?.destino;
+            if (destinoField === 'meta.PAIS') return item?.meta?.PAIS;
+            if (destinoField === 'meta.pais') return item?.meta?.pais;
+            if (destinoField === 'meta.country') return item?.meta?.country;
+            return null;
+        };
 
         const dataForCompanies = pendingFilters.destino.length
-            ? data.filter(i => (i?.meta?.pais || i?.meta?.destino) && pendingFilters.destino.includes(String(i.meta.pais || i.meta.destino))) : data;
+            ? data.filter(i => pendingFilters.destino.includes(String(getDestinValue(i)))) : data;
         const companies = getUnique(dataForCompanies, 'meta.company');
 
         const dataForCurrencies = pendingFilters.company.length
@@ -274,15 +326,52 @@ const PaymentsV2 = ({
 
         const dataForGrupos = pendingFilters.currency.length
             ? dataForCurrencies.filter(i => i?.currency && pendingFilters.currency.includes(String(i.currency))) : dataForCurrencies;
-        const grupos = getUnique(dataForGrupos, 'group');
+
+        // Grupos: combinar código | descripción (si existe description_grupo_proveedor)
+        const gruposMap = new Map();
+        dataForGrupos.forEach(item => {
+            const code = item?.group;
+            const desc = item?.meta?.description_grupo_proveedor;
+            if (code) {
+                const key = code;
+                if (!gruposMap.has(key)) {
+                    gruposMap.set(key, { code, desc });
+                }
+            }
+        });
+        const grupos = Array.from(gruposMap.values()).map(g =>
+            g.desc ? `${String(g.code).trim()} | ${String(g.desc).trim()}` : String(g.code).trim()
+        ).sort();
 
         const dataForSubgrupos = pendingFilters.grupo.length
-            ? dataForGrupos.filter(i => pendingFilters.grupo.includes(String(i.group))) : dataForGrupos;
+            ? dataForGrupos.filter(i => {
+                const groupCode = String(i?.group || '').trim();
+                // Soportar tanto "PROV" como "PROV | PROVEEDOR"
+                return pendingFilters.grupo.some(g => {
+                    const gCode = extractCode(g);
+                    return gCode === groupCode;
+                });
+            }) : dataForGrupos;
         const subgrupos = getUnique(dataForSubgrupos, 'subgrupo_c');
 
         const dataForDocTypes = pendingFilters.subgrupo.length
             ? dataForSubgrupos.filter(i => pendingFilters.subgrupo.includes(String(i.meta?.subgrupo_c))) : dataForSubgrupos;
-        const docTypes = getUnique(dataForDocTypes, 'description_tran_doc_type');
+
+        // Tipos Doc: combinar código | descripción (si existe description_tran_doc_type)
+        const docTypesMap = new Map();
+        dataForDocTypes.forEach(item => {
+            const code = item?.meta?.tran_doc_type_id;
+            const desc = item?.meta?.description_tran_doc_type;
+            if (code) {
+                const key = code;
+                if (!docTypesMap.has(key)) {
+                    docTypesMap.set(key, { code, desc });
+                }
+            }
+        });
+        const docTypes = Array.from(docTypesMap.values()).map(d =>
+            d.desc ? `${String(d.code).trim()} | ${String(d.desc).trim()}` : String(d.code).trim()
+        ).sort();
 
         return { destinos, companies, currencies, grupos, docTypes, subgrupos };
     }, [rawInvoices, pendingFilters]);
@@ -356,8 +445,7 @@ const PaymentsV2 = ({
             if (!d?.meta?.hasFiscalError) return false;
             const meta = d.meta;
             const matchDestino = appliedFilters.destino.length === 0 ||
-                (meta.pais && appliedFilters.destino.includes(meta.pais)) ||
-                (meta.destino && appliedFilters.destino.includes(meta.destino));
+                (d.meta?.destino && appliedFilters.destino.includes(String(d.meta.destino)));
             const matchCompany = appliedFilters.company.length === 0 || (meta.company && appliedFilters.company.includes(meta.company));
             return matchDestino && matchCompany;
         });
@@ -371,11 +459,6 @@ const PaymentsV2 = ({
         });
         return Object.values(groups).sort((a, b) => b.count - a.count);
     }, [rawInvoices, appliedFilters]);
-
-    const groupList = useMemo(() => {
-        if (!catalogs?.groups) return [];
-        return catalogs.groups;
-    }, [catalogs]);
 
     const handleSort = (key) => {
         let direction = 'asc';
@@ -394,6 +477,16 @@ const PaymentsV2 = ({
     const [syncError, setSyncError] = useState(null);
     const [isBatchPanelOpen, setIsBatchPanelOpen] = useState(true);
 
+    // RN-023 — Panel lateral derecho (selección activa)
+    const [isRightPanelOpen, setIsRightPanelOpen] = useState(false);
+    const [rightPanelNodes, setRightPanelNodes] = useState({});
+    const [bulkCleanPreviewIds, setBulkCleanPreviewIds] = useState(new Set());
+
+    // RN-024 — Pagos Parciales
+    const [parcialidades, setParcialidades] = useState({}); // { invoiceId: { importe, createdAt } }
+    const [parcialidadModalInvoice, setParcialidadModalInvoice] = useState(null);
+    const [parcialidadImporte, setParcialidadImporte] = useState('');
+
     // --- BRECHA-02: Validación DLL pre-envío (REQ-008 / INV-006) ---
     const [validacionModal, setValidacionModal] = useState(null);
     // validacionModal: { tipo: 'H2H'|'MANUAL', resultado: { aptas, rechazadas, resumen } } | null
@@ -401,6 +494,82 @@ const PaymentsV2 = ({
     // --- BRECHA-04: Referencias de evento aisladas por factura (INV-002) ---
     // Map { invoiceId -> { ref1, ref2 } } — no muta el state global rawInvoices
     const [referenciasEvento, setReferenciasEvento] = useState({});
+
+    // --- LISTA BATCH: batches temporales guardados (máx 48 hrs) ---
+    const HS_TEMP_KEY = 'hs_temp_batches';
+    const TEMP_TTL_MS = 48 * 60 * 60 * 1000;
+
+    const loadTempBatches = () => {
+        try {
+            const raw = JSON.parse(localStorage.getItem(HS_TEMP_KEY) || '[]');
+            const now = Date.now();
+            const valid = raw.filter(b => now - b.savedAt < TEMP_TTL_MS);
+            if (valid.length !== raw.length) localStorage.setItem(HS_TEMP_KEY, JSON.stringify(valid));
+            return valid;
+        } catch { return []; }
+    };
+
+    const [savedBatches, setSavedBatches] = useState(loadTempBatches);
+    const [showBatchList, setShowBatchList] = useState(false);
+    const [showSaveTempConfirm, setShowSaveTempConfirm] = useState(false);
+
+    const persistBatches = (batches) => {
+        localStorage.setItem(HS_TEMP_KEY, JSON.stringify(batches));
+        setSavedBatches(batches);
+    };
+
+    const handleSaveTempBatch = () => {
+        if ((authorizedInvoices || []).length === 0) return;
+        const destino = appliedFilters.destino.length > 0 ? appliedFilters.destino.join(', ') : 'Sin Destino';
+        const totalMXN = (authorizedInvoices || []).filter(i => i.currency !== 'USD').reduce((s, i) => s + (i.amount || 0), 0);
+        const totalUSD = (authorizedInvoices || []).filter(i => i.currency === 'USD').reduce((s, i) => s + (i.amount || 0), 0);
+        const newBatch = {
+            id: `TEMP-${Date.now()}`,
+            savedAt: Date.now(),
+            destino,
+            invoiceCount: (authorizedInvoices || []).length,
+            totalMXN,
+            totalUSD,
+            status: 'temporal',
+            invoices: [...(authorizedInvoices || [])],
+            parcialidades: { ...parcialidades },
+            referenciasEvento: { ...referenciasEvento },
+        };
+        const updated = [...loadTempBatches(), newBatch];
+        persistBatches(updated);
+        if (setAuthorizedInvoices) setAuthorizedInvoices([]);
+        setParcialidades({});
+        setReferenciasEvento({});
+        setShowSaveTempConfirm(false);
+        showToast('Batch guardado temporalmente. Tienes 48 hrs para retomarlo.');
+    };
+
+    const handleEditTempBatch = (batch) => {
+        if ((authorizedInvoices || []).length > 0) {
+            showToast('Hay un batch en proceso. Ciérralo o guárdalo antes de abrir otro.');
+            return;
+        }
+        if (setAuthorizedInvoices) setAuthorizedInvoices(batch.invoices || []);
+        setParcialidades(batch.parcialidades || {});
+        setReferenciasEvento(batch.referenciasEvento || {});
+        const remaining = loadTempBatches().filter(b => b.id !== batch.id);
+        persistBatches(remaining);
+        setShowBatchList(false);
+        showToast(`Batch ${batch.id} cargado. Continúa trabajando.`);
+    };
+
+    const handleDeleteTempBatch = (id) => {
+        const remaining = loadTempBatches().filter(b => b.id !== id);
+        persistBatches(remaining);
+    };
+
+    const formatTempAge = (savedAt, now) => {
+        const diff = now - savedAt;
+        const hrs = Math.floor(diff / 3600000);
+        const mins = Math.floor((diff % 3600000) / 60000);
+        if (hrs === 0) return `${mins}min`;
+        return `${hrs}h ${mins}min`;
+    };
 
     const handleReferenciaEvento = (invoiceId, campo, valor) => {
         setReferenciasEvento(prev => ({
@@ -413,7 +582,8 @@ const PaymentsV2 = ({
     const getRefEvento = (inv, campo) =>
         referenciasEvento[inv.id]?.[campo] ?? inv[campo] ?? '';
 
-    // --- REQ-008: Disparar validación DLL pre-envío sobre las facturas autorizadas ---
+    // --- REQ-008: Disparar validación DLL pre-envío — pendiente migrar al módulo Pagos (RN-021) ---
+    // eslint-disable-next-line no-unused-vars
     const handleProcesarPagos = (tipoProceso) => {
         const facturas = (authorizedInvoices?.length > 0 ? authorizedInvoices : finalizedInvoices) ?? [];
         if (facturas.length === 0) {
@@ -606,13 +776,12 @@ const PaymentsV2 = ({
             const matchSearch = searchStr.includes(searchTerm.toLowerCase());
 
             const matchDestino = appliedFilters.destino.length === 0 ||
-                (meta.pais && appliedFilters.destino.includes(meta.pais)) ||
-                (meta.destino && appliedFilters.destino.includes(meta.destino));
+                (d.meta?.destino && appliedFilters.destino.includes(String(d.meta.destino)));
 
             const matchCompany = appliedFilters.company.length === 0 || (meta.company && appliedFilters.company.includes(meta.company));
             const matchCurrency = appliedFilters.currency.length === 0 || appliedFilters.currency.includes(d.currency);
             const matchGrupo = appliedFilters.grupo.length === 0 || appliedFilters.grupo.includes(d.group);
-            const matchDocType = appliedFilters.documentType.length === 0 || appliedFilters.documentType.includes(meta.tipo_c || meta.document_type);
+            const matchDocType = appliedFilters.documentType.length === 0 || appliedFilters.documentType.includes(meta.tran_doc_type_id || meta.tipo_c || meta.document_type);
             const matchSubgrupo = appliedFilters.subgrupo.length === 0 || appliedFilters.subgrupo.includes(meta.subgrupo_c);
             const matchDate = !appliedFilters.dateCutoff || (d.dueDate && d.dueDate <= appliedFilters.dateCutoff);
 
@@ -684,9 +853,8 @@ const PaymentsV2 = ({
 
     // --- LÓGICA DE JERARQUÍA PARA EL MODAL DE RESUMEN (UNIFICADO) ---
     const authHierarchy = useMemo(() => {
-        const source = (authorizedInvoices && authorizedInvoices.length > 0)
-            ? authorizedInvoices
-            : (finalizedInvoices || []);
+        // Panel derecho muestra SOLO facturas en selección activa (authorizedInvoices)
+        const source = authorizedInvoices || [];
 
         const term = authModalSearch.toLowerCase();
         const filteredSource = source.filter(inv =>
@@ -704,20 +872,44 @@ const PaymentsV2 = ({
             if (!tree[co]) tree[co] = { name: co, mxn: 0, usd: 0, providers: {} };
             if (!tree[co].providers[prov]) tree[co].providers[prov] = { name: prov, mxn: 0, usd: 0, invoices: [] };
 
+            // Usar importe parcial si existe (desde estado parcialidades), sino usar balance completo
+            const amount = parcialidades[inv.id]?.importe || inv.amount;
             if (inv.currency === 'USD') {
-                tree[co].usd += inv.amount;
-                tree[co].providers[prov].usd += inv.amount;
+                tree[co].usd += amount;
+                tree[co].providers[prov].usd += amount;
             } else {
-                tree[co].mxn += inv.amount;
-                tree[co].providers[prov].mxn += inv.amount;
+                tree[co].mxn += amount;
+                tree[co].providers[prov].mxn += amount;
             }
             tree[co].providers[prov].invoices.push(inv);
         });
         return tree;
-    }, [authorizedInvoices, finalizedInvoices, authModalSearch]);
+    }, [authorizedInvoices, authModalSearch, parcialidades]);
 
     const toggleAuthNode = (id) => {
         setCollapsedAuthNodes(prev => ({ ...prev, [id]: !prev[id] }));
+    };
+
+    const toggleRightNode = (key) => {
+        setRightPanelNodes(prev => ({ ...prev, [key]: !prev[key] }));
+    };
+
+    const handleExcludeInvoiceFromSelection = (invoice) => {
+        const ids = new Set([invoice.id]);
+        if (setAuthorizedInvoices) {
+            setAuthorizedInvoices(prev => prev.filter(inv => !ids.has(inv.id)));
+        }
+        if (setRawInvoices) {
+            setRawInvoices(prev => [...prev, { ...invoice, _authStatus: undefined }]);
+        }
+        // Remover parcialidad si existe
+        setParcialidades(prev => {
+            const newParcialidades = { ...prev };
+            delete newParcialidades[invoice.id];
+            return newParcialidades;
+        });
+        // Limpiar nodos colapsados para forzar re-render del panel derecho
+        setRightPanelNodes({});
     };
 
     const handleCollapseToProviders = () => {
@@ -734,17 +926,39 @@ const PaymentsV2 = ({
     };
 
     // --- ORDENAMIENTO ---
+    const isExcludedInvoice = (invoice) => {
+        const meta = invoice?.meta || {};
+        const exclusionText = [
+            invoice?.batchExclusion?.status,
+            meta.exclusion_status,
+            meta.excluded_from_batch_id,
+            invoice?.label,
+            meta.etiqueta,
+            meta.label,
+            invoice?.status,
+        ].filter(Boolean).join(' ').toUpperCase();
+
+        return invoice?.batchExclusion?.status === 'excluded'
+            || meta.exclusion_status === 'excluded_from_batch'
+            || exclusionText.includes('EXCLUID');
+    };
+
     const sortedData = useMemo(() => {
         let sortableItems = [...filteredData];
-        if (sortConfig.key) {
-            sortableItems.sort((a, b) => {
+        sortableItems.sort((a, b) => {
+            const aExcluded = isExcludedInvoice(a);
+            const bExcluded = isExcludedInvoice(b);
+            if (aExcluded !== bExcluded) return aExcluded ? -1 : 1;
+
+            if (sortConfig.key) {
                 const aVal = a[sortConfig.key] || a.meta?.[sortConfig.key];
                 const bVal = b[sortConfig.key] || b.meta?.[sortConfig.key];
                 if (aVal < bVal) return sortConfig.direction === 'asc' ? -1 : 1;
                 if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
-                return 0;
-            });
-        }
+            }
+
+            return 0;
+        });
         return sortableItems;
     }, [filteredData, sortConfig]);
 
@@ -752,6 +966,10 @@ const PaymentsV2 = ({
     // Usa baseForGroups para que el conteo sea coherente con los totales del sidebar
 
     const pendingTotal = filteredData.filter(d => d._authStatus === 'pending').length;
+    const cleanAllEligibleInvoices = useMemo(() => (
+        filteredData.filter(d => d._authStatus !== 'authorized')
+    ), [filteredData]);
+    const cleanAllEligibleTotal = cleanAllEligibleInvoices.length;
 
     // Resetear página cuando cambian los filtros del sidebar o el grupo seleccionado
     useEffect(() => { setPage(1); }, [sidebarFilters, selectedNode, searchTerm, appliedFilters]);
@@ -759,9 +977,42 @@ const PaymentsV2 = ({
     // --- LÓGICA DE AUTORIZACIÓN ---
     const stripAuthStatus = ({ _authStatus, ...inv }) => inv;
 
+    const addInvoicesToOpenBatch = (invoices) => {
+        const invoiceList = Array.isArray(invoices) ? invoices : [invoices].filter(Boolean);
+        if (invoiceList.length === 0) return;
+
+        const ids = new Set(invoiceList.map(inv => inv.id));
+        setRawInvoices(prev => prev.filter(inv => !ids.has(inv.id)));
+        if (setAuthorizedInvoices) {
+            setAuthorizedInvoices(prev => [...prev, ...invoiceList.map(stripAuthStatus)]);
+        }
+    };
+
+    const confirmBalanceValidationIfNeeded = (stage, invoices, onConfirm, options = {}) => {
+        const validation = getBalanceValidationHit(invoices, stage);
+        if (!validation) {
+            if (options.message) showConfirm(options.message, onConfirm, { confirmLabel: options.confirmLabel });
+            else onConfirm();
+            return;
+        }
+
+        const message = [
+            options.message,
+            formatBalanceValidationMessage(validation, formatCurrency),
+            'Selecciona Confirmar para continuar con la operacion.',
+        ].filter(Boolean).join('\n\n');
+
+        showConfirm(message, onConfirm, { confirmLabel: options.confirmLabel || 'Continuar' });
+    };
+
     const handleAuthorizeInvoice = (invoice) => {
-        setRawInvoices(prev => prev.filter(inv => inv.id !== invoice.id));
-        if (setAuthorizedInvoices) setAuthorizedInvoices(prev => [...prev, stripAuthStatus(invoice)]);
+        const invoiceToAdd = stripAuthStatus(invoice);
+        confirmBalanceValidationIfNeeded(
+            BALANCE_VALIDATION_STAGES.ADD_TO_BATCH,
+            [invoiceToAdd],
+            () => addInvoicesToOpenBatch([invoiceToAdd]),
+            { confirmLabel: 'Agregar' }
+        );
     };
 
     const handleRevokeInvoice = (invoice) => {
@@ -770,6 +1021,87 @@ const PaymentsV2 = ({
         // También asegurar que se elimine de la lista de finalizados si el batch ya se cerró
         if (setFinalizedInvoices) setFinalizedInvoices(prev => prev.filter(inv => inv.id !== invoice.id));
         setRawInvoices(prev => [...prev, stripAuthStatus(invoice)]);
+    };
+
+    const cleanLocalInvoiceState = (invoiceIds) => {
+        setParcialidades(prev => {
+            const next = { ...prev };
+            invoiceIds.forEach(id => delete next[id]);
+            return next;
+        });
+        setReferenciasEvento(prev => {
+            const next = { ...prev };
+            invoiceIds.forEach(id => delete next[id]);
+            return next;
+        });
+        setRightPanelNodes({});
+        setPage(1);
+    };
+
+    const releaseInvoicesFromView = (invoicesToClean) => {
+        const ids = new Set(invoicesToClean.map(inv => inv.id));
+        if (setRawInvoices) setRawInvoices(prev => (prev ?? []).filter(inv => !ids.has(inv.id)));
+        if (setAuthorizedInvoices) setAuthorizedInvoices(prev => (prev ?? []).filter(inv => !ids.has(inv.id)));
+        if (setFinalizedInvoices) setFinalizedInvoices(prev => (prev ?? []).filter(inv => !ids.has(inv.id)));
+        cleanLocalInvoiceState(ids);
+    };
+
+    const getCleanTotalsLabel = (invoices) => {
+        const totals = invoices.reduce((acc, inv) => {
+            const currency = inv.currency === 'USD' ? 'USD' : 'MXN';
+            acc[currency] += inv.amount || 0;
+            return acc;
+        }, { MXN: 0, USD: 0 });
+
+        const parts = [];
+        if (totals.MXN > 0) parts.push(`MXN ${formatCurrency(totals.MXN, 'MXN')}`);
+        if (totals.USD > 0) parts.push(`USD ${formatCurrency(totals.USD, 'USD')}`);
+        return parts.length > 0 ? parts.join(' / ') : `MXN ${formatCurrency(0, 'MXN')}`;
+    };
+
+    const handleCleanInvoice = (invoice) => {
+        const invoiceLabel = invoice.meta?.invoice || invoice.id || 'seleccionada';
+
+        showConfirm(
+            `¿Liberar la factura ${invoiceLabel} de la propuesta de pago? Ya no se visualizará en esta consulta; podrás verla de nuevo agregándola manualmente o cargando nuevamente la consulta.`,
+            () => {
+                releaseInvoicesFromView([invoice]);
+                showToast(`Factura ${invoiceLabel} liberada de la propuesta.`);
+            }
+        );
+    };
+
+    const handleMassCleanInvoices = (invoicesToClean, scopeName) => {
+        if (!invoicesToClean || invoicesToClean.length === 0) return;
+
+        showConfirm(
+            `¿Liberar ${invoicesToClean.length} factura(s) ${scopeName} de la propuesta de pago? Ya no se visualizarán en esta consulta; podrás verlas de nuevo agregándolas manualmente o cargando nuevamente la consulta.`,
+            () => {
+                releaseInvoicesFromView(invoicesToClean);
+                showToast(`${invoicesToClean.length} factura(s) liberada(s) de la propuesta.`);
+            }
+        );
+    };
+
+    const handleCleanAllRecovered = () => {
+        if (cleanAllEligibleTotal === 0) {
+            showToast('No hay facturas fuera del Batch Abierto para liberar.');
+            return;
+        }
+
+        const ids = new Set(cleanAllEligibleInvoices.map(inv => inv.id));
+        const scopeName = selectedNode ? `de "${selectedNode.label}"` : 'del resultado actual';
+        setBulkCleanPreviewIds(ids);
+
+        showConfirm(
+            `Se seleccionaron ${cleanAllEligibleTotal} factura(s) ${scopeName} para liberar por ${getCleanTotalsLabel(cleanAllEligibleInvoices)}. Las facturas que ya estÃ¡n en el Batch Abierto no se liberarÃ¡n automÃ¡ticamente. Â¿Deseas liberar estas facturas?`,
+            () => {
+                releaseInvoicesFromView(cleanAllEligibleInvoices);
+                setBulkCleanPreviewIds(new Set());
+                showToast(`${cleanAllEligibleTotal} factura(s) liberada(s) para trabajar desde Epicor.`);
+            },
+            { onCancel: () => setBulkCleanPreviewIds(new Set()) }
+        );
     };
 
     const handleMassRevoke = (invoicesToRevoke, scopeName) => {
@@ -784,9 +1116,27 @@ const PaymentsV2 = ({
     const handleAuthorizeGroup = (groupCode) => {
         const toAuth = filteredData.filter(d => d._authStatus === 'pending' && d.group === groupCode);
         if (toAuth.length === 0) return;
-        const ids = new Set(toAuth.map(d => d.id));
-        setRawInvoices(prev => prev.filter(inv => !ids.has(inv.id)));
-        if (setAuthorizedInvoices) setAuthorizedInvoices(prev => [...prev, ...toAuth.map(stripAuthStatus)]);
+        const invoicesToValidate = toAuth.map(stripAuthStatus);
+        if (getBalanceValidationHit(invoicesToValidate, BALANCE_VALIDATION_STAGES.ADD_TO_BATCH)) {
+            confirmBalanceValidationIfNeeded(
+                BALANCE_VALIDATION_STAGES.ADD_TO_BATCH,
+                invoicesToValidate,
+                () => addInvoicesToOpenBatch(invoicesToValidate),
+                {
+                    message: `Agregar ${toAuth.length} factura${toAuth.length !== 1 ? 's' : ''} del grupo "${groupCode}" a la propuesta.`,
+                    confirmLabel: 'Agregar',
+                }
+            );
+            return;
+        }
+        showConfirm(
+            `¿Añadir ${toAuth.length} factura${toAuth.length !== 1 ? 's' : ''} del grupo "${groupCode}" a la propuesta?`,
+            () => {
+                const ids = new Set(toAuth.map(d => d.id));
+                setRawInvoices(prev => prev.filter(inv => !ids.has(inv.id)));
+                if (setAuthorizedInvoices) setAuthorizedInvoices(prev => [...prev, ...toAuth.map(stripAuthStatus)]);
+            }
+        );
     };
 
     const handleAuthorizeAll = () => {
@@ -794,6 +1144,19 @@ const PaymentsV2 = ({
         if (toAuth.length === 0) return;
 
         const nodeScope = selectedNode ? `de "${selectedNode.label}"` : "del resultado actual";
+        const invoicesToValidate = toAuth.map(stripAuthStatus);
+        if (getBalanceValidationHit(invoicesToValidate, BALANCE_VALIDATION_STAGES.ADD_TO_BATCH)) {
+            confirmBalanceValidationIfNeeded(
+                BALANCE_VALIDATION_STAGES.ADD_TO_BATCH,
+                invoicesToValidate,
+                () => addInvoicesToOpenBatch(invoicesToValidate),
+                {
+                    message: `Agregar ${toAuth.length} factura${toAuth.length !== 1 ? 's' : ''} ${nodeScope} a la propuesta.`,
+                    confirmLabel: 'Agregar',
+                }
+            );
+            return;
+        }
 
         showConfirm(
             `¿Añadir ${toAuth.length} factura${toAuth.length !== 1 ? 's' : ''} ${nodeScope} a la propuesta?`,
@@ -823,11 +1186,21 @@ const PaymentsV2 = ({
                     invoiceCount: authorizedInvoices.length,
                     totalMXN,
                     totalUSD,
+                    invoices: authorizedInvoices.map(inv => ({
+                        ...inv,
+                        parcialidad: parcialidades[inv.id] || inv.parcialidad,
+                        ref1: referenciasEvento[inv.id]?.ref1 ?? inv.ref1,
+                        ref2: referenciasEvento[inv.id]?.ref2 ?? inv.ref2,
+                    })),
+                    hasParcialidades: authorizedInvoices.some(inv => inv.parcialidad?.importe)
                 };
-                if (setFinalizedInvoices) setFinalizedInvoices([...authorizedInvoices]);
+                if (setFinalizedInvoices) setFinalizedInvoices(newBatch.invoices);
                 if (setAuthorizedInvoices) setAuthorizedInvoices([]);
                 if (setActiveBatch) setActiveBatch({ ...newBatch, status: 'finalized' });
                 if (setBatchList) setBatchList(prev => [newBatch, ...(prev || [])]);
+                setParcialidades({}); // Limpiar parcialidades para siguiente batch
+                setRightPanelNodes({}); // Limpiar estado colapsado/expandido del panel
+                setIsRightPanelOpen(false); // Cerrar panel derecho automáticamente
                 setIsAuthModalOpen(false); // Cerramos el modal tras el éxito
                 setSelectedNode(null);
                 setPage(1);
@@ -842,6 +1215,88 @@ const PaymentsV2 = ({
             setBatchList(prev => prev.map(b => b.id === batchId ? { ...b, status: 'closed' } : b));
         }
         showToast(`Batch ${batchId} marcado como CERRADO.`);
+    };
+
+    // RN-024 — Handlers para Pagos Parciales
+    const handleOpenParcialidadModal = (invoice) => {
+        setParcialidadModalInvoice(invoice);
+        setParcialidadImporte(invoice.parcialidad?.importe?.toString() || '');
+    };
+
+    const handleSaveParcialidad = () => {
+        const importe = parseFloat(parcialidadImporte.replace(/,/g, ''));
+
+        if (isNaN(importe) || importe <= 0) {
+            showToast('El importe debe ser mayor a cero.');
+            return;
+        }
+
+        // Detectar si es edición (parcialidad existe) o creación nueva
+        const esEdicion = !!parcialidades[parcialidadModalInvoice.id];
+
+        // Calcular total de parcialidades existentes (de OTRAS facturas)
+        const totalParcialidades = Object.values(parcialidades).reduce((sum, p) => sum + (p.importe || 0), 0);
+
+        // Si es edición, restar la parcialidad anterior para calcular el nuevo total
+        const parcialidadAnterior = parcialidades[parcialidadModalInvoice.id]?.importe || 0;
+        const totalSinAnterior = totalParcialidades - parcialidadAnterior;
+
+        // Validar que la suma de parcialidades no exceda el balance
+        // Esto aplica en AMBOS casos: batch abierto y cerrado
+        if (totalSinAnterior + importe > parcialidadModalInvoice.amount) {
+            const disponible = parcialidadModalInvoice.amount - totalSinAnterior;
+            showToast(`El importe no puede exceder ${formatCurrency(disponible)}. (Parcialidades previas: ${formatCurrency(totalSinAnterior)})`);
+            return;
+        }
+
+        // Crear objeto de parcialidad
+        const parcialidadData = {
+            importe,
+            createdAt: new Date().toISOString()
+        };
+
+        const invoiceCleanForBalance = stripAuthStatus(parcialidadModalInvoice);
+        const alreadyAuthorizedForBalance = (authorizedInvoices || []).some(inv => inv.id === parcialidadModalInvoice.id);
+        if (!alreadyAuthorizedForBalance && getBalanceValidationHit([invoiceCleanForBalance], BALANCE_VALIDATION_STAGES.ADD_TO_BATCH)) {
+            confirmBalanceValidationIfNeeded(
+                BALANCE_VALIDATION_STAGES.ADD_TO_BATCH,
+                [invoiceCleanForBalance],
+                () => {
+                    setParcialidades(prev => ({
+                        ...prev,
+                        [parcialidadModalInvoice.id]: parcialidadData
+                    }));
+                    addInvoicesToOpenBatch([invoiceCleanForBalance]);
+                    setParcialidadModalInvoice(null);
+                    setParcialidadImporte('');
+                    showToast(`Parcialidad registrada: ${formatCurrency(importe)}`);
+                },
+                {
+                    message: `Registrar parcialidad por ${formatCurrency(importe)} y agregar la factura al batch.`,
+                    confirmLabel: 'Agregar',
+                }
+            );
+            return;
+        }
+
+        // Actualizar estado de parcialidades
+        setParcialidades(prev => ({
+            ...prev,
+            [parcialidadModalInvoice.id]: parcialidadData
+        }));
+
+        // Autorizar factura solo si NO está ya en authorizedInvoices (evitar duplicados)
+        const yaAutorizada = (authorizedInvoices || []).some(inv => inv.id === parcialidadModalInvoice.id);
+
+        if (!yaAutorizada) {
+            const invoiceClean = stripAuthStatus(parcialidadModalInvoice);
+            setRawInvoices(prev => prev.filter(inv => inv.id !== parcialidadModalInvoice.id));
+            if (setAuthorizedInvoices) setAuthorizedInvoices(prev => [...prev, invoiceClean]);
+        }
+
+        setParcialidadModalInvoice(null);
+        setParcialidadImporte('');
+        showToast(`Parcialidad registrada: ${formatCurrency(importe)}`);
     };
 
     // --- LÓGICA DE ÁRBOL JERÁRQUICO (Jerarquía: Compañía > Grupo > Proveedor > Purchase Point > Doc Type) ---
@@ -914,8 +1369,7 @@ const PaymentsV2 = ({
             if (!d?.meta?.hasFiscalError) return false;
             const meta = d.meta;
             const matchDestino = appliedFilters.destino.length === 0 ||
-                (meta.pais && appliedFilters.destino.includes(meta.pais)) ||
-                (meta.destino && appliedFilters.destino.includes(meta.destino));
+                (d.pais && appliedFilters.destino.includes(d.pais));
             const matchCompany = appliedFilters.company.length === 0 || (meta.company && appliedFilters.company.includes(meta.company));
             return matchDestino && matchCompany;
         }).length;
@@ -923,24 +1377,28 @@ const PaymentsV2 = ({
         return { mxn, usd, overdueMxn, overdueUsd, upcomingMxn, upcomingUsd, providers: providers.size, errors: errorsCount, total: filteredData.length };
     }, [filteredData, rawInvoices, appliedFilters]);
 
-    // KPIs exclusivos para la data autorizada (Resumen del Modal)
+    // KPIs exclusivos para la data autorizada (Resumen del Panel Derecho)
     const authKpis = useMemo(() => {
-        const source = (authorizedInvoices && authorizedInvoices.length > 0) ? authorizedInvoices : (finalizedInvoices || []);
+        // Mostrar SOLO facturas en selección activa (authorizedInvoices)
+        const source = authorizedInvoices || [];
         const today = new Date().toISOString().split('T')[0];
 
-        const mxn = source.filter(i => i.currency === 'MXN').reduce((sum, i) => sum + i.amount, 0);
-        const usd = source.filter(i => i.currency === 'USD').reduce((sum, i) => sum + i.amount, 0);
+        // Usar importe parcial si existe, sino usar balance completo
+        const getAmount = (inv) => parcialidades[inv.id]?.importe || inv.amount;
 
-        const overdueMxn = source.filter(i => i.currency === 'MXN' && i.dueDate < today).reduce((s, i) => s + i.amount, 0);
-        const overdueUsd = source.filter(i => i.currency === 'USD' && i.dueDate < today).reduce((s, i) => s + i.amount, 0);
-        const upcomingMxn = source.filter(i => i.currency === 'MXN' && i.dueDate >= today).reduce((s, i) => s + i.amount, 0);
-        const upcomingUsd = source.filter(i => i.currency === 'USD' && i.dueDate >= today).reduce((s, i) => s + i.amount, 0);
+        const mxn = source.filter(i => i.currency === 'MXN').reduce((sum, i) => sum + getAmount(i), 0);
+        const usd = source.filter(i => i.currency === 'USD').reduce((sum, i) => sum + getAmount(i), 0);
+
+        const overdueMxn = source.filter(i => i.currency === 'MXN' && i.dueDate < today).reduce((s, i) => s + getAmount(i), 0);
+        const overdueUsd = source.filter(i => i.currency === 'USD' && i.dueDate < today).reduce((s, i) => s + getAmount(i), 0);
+        const upcomingMxn = source.filter(i => i.currency === 'MXN' && i.dueDate >= today).reduce((s, i) => s + getAmount(i), 0);
+        const upcomingUsd = source.filter(i => i.currency === 'USD' && i.dueDate >= today).reduce((s, i) => s + getAmount(i), 0);
 
         return {
             mxn, usd, overdueMxn, overdueUsd, upcomingMxn, upcomingUsd,
             total: source.length
         };
-    }, [authorizedInvoices, finalizedInvoices]);
+    }, [authorizedInvoices, parcialidades]);
 
     const paginatedData = sortedData.slice((page - 1) * pageSize, page * pageSize);
     const totalPages = Math.ceil(sortedData.length / pageSize) || 1;
@@ -964,17 +1422,18 @@ const PaymentsV2 = ({
             <div className="shrink-0 flex flex-col bg-white border border-slate-200 rounded-xl shadow-sm z-30">
                 <div className="flex items-center justify-between px-4 py-2 border-b border-slate-50">
                     <div className="flex items-center">
-                        <div>
+                        {/*<div>
                             <h1 className="text-2xl font-black text-slate-800 tracking-tight uppercase" style={{ fontFamily: HS.fontTitle }}>
                                 Gestión de Pagos V2
                             </h1>
                             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
                                 Portal HS · Cartera de Proveedores
                             </p>
-                        </div>
+                        </div>*/}
                     </div>
                     <div className="flex items-center gap-3">
-                        <button
+                        {/* RN-023: Botón "Ver Resumen" reemplazado por panel derecho colapsable — Fallback cuando panel está cerrado */}
+                        {/* <button
                             onClick={() => { setSelectedAuthProvider(null); setIsAuthModalOpen(true); }}
                             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-tight transition-all duration-500 shadow-sm border
                                 ${authByProvider.length > 0
@@ -985,7 +1444,7 @@ const PaymentsV2 = ({
                             Ver Resumen
                             {authByProvider.length > 0 && <span className="ml-1 bg-white/20 px-1.5 py-0.5 rounded-full text-[9px]">{authorizedInvoices.length || finalizedInvoices.length}</span>}
                         </button>
-                        <div className="h-6 w-px bg-slate-200" />
+                        <div className="h-6 w-px bg-slate-200" /> */}
                         <button onClick={() => setIsHeaderOpen(v => !v)} className="flex items-center gap-1.5 text-[10px] font-semibold text-slate-400 hover:text-slate-700 transition-colors px-2 py-1 rounded-lg hover:bg-slate-100">
                             {isHeaderOpen ? <><ChevronUp size={14} /> Ocultar Filtros</> : <><ChevronDown size={14} /> Mostrar Filtros</>}
                         </button>
@@ -994,12 +1453,12 @@ const PaymentsV2 = ({
                 {isHeaderOpen && (
                     <div className="px-4 py-3 bg-slate-50/50">
                         <div className="flex flex-wrap gap-3 items-end">
-                            <MultiSelectHeaderFilter label="Filtro 1: Destino" options={dynamicOptions.destinos} selectedValues={pendingFilters.destino} onChange={(val) => setPendingFilters(p => ({ ...p, destino: val }))} />
-                            <MultiSelectHeaderFilter label="Filtro 2: Compañía" options={dynamicOptions.companies} selectedValues={pendingFilters.company} onChange={(val) => setPendingFilters(p => ({ ...p, company: val }))} />
-                            <MultiSelectHeaderFilter label="Filtro 3: Moneda" options={dynamicOptions.currencies} selectedValues={pendingFilters.currency} onChange={(val) => setPendingFilters(p => ({ ...p, currency: val }))} />
-                            <MultiSelectHeaderFilter label="Filtro 4: Grupo Proveedor" options={dynamicOptions.grupos} selectedValues={pendingFilters.grupo} onChange={(val) => setPendingFilters(p => ({ ...p, grupo: val }))} />
-                            <MultiSelectHeaderFilter label="Filtro 5: Sub Grupo" options={dynamicOptions.subgrupos} selectedValues={pendingFilters.subgrupo} onChange={(val) => setPendingFilters(p => ({ ...p, subgrupo: val }))} />
-                            <MultiSelectHeaderFilter label="Filtro 6: Tipo Doc" options={dynamicOptions.docTypes} selectedValues={pendingFilters.documentType} onChange={(val) => setPendingFilters(p => ({ ...p, documentType: val }))} />
+                            <MultiSelectHeaderFilter label="Destino" options={dynamicOptions.destinos} selectedValues={pendingFilters.destino} onChange={(val) => setPendingFilters(p => ({ ...p, destino: val }))} />
+                            <MultiSelectHeaderFilter label="Compañía" options={dynamicOptions.companies} selectedValues={pendingFilters.company} onChange={(val) => setPendingFilters(p => ({ ...p, company: val }))} />
+                            <MultiSelectHeaderFilter label="Moneda" options={dynamicOptions.currencies} selectedValues={pendingFilters.currency} onChange={(val) => setPendingFilters(p => ({ ...p, currency: val }))} />
+                            <MultiSelectHeaderFilter label="Grupo Proveedor" options={dynamicOptions.grupos} selectedValues={pendingFilters.grupo} onChange={(val) => setPendingFilters(p => ({ ...p, grupo: val.map(extractCode) }))} />
+                            <MultiSelectHeaderFilter label="Sub Grupo" options={dynamicOptions.subgrupos} selectedValues={pendingFilters.subgrupo} onChange={(val) => setPendingFilters(p => ({ ...p, subgrupo: val }))} />
+                            <MultiSelectHeaderFilter label="Tipo Doc" options={dynamicOptions.docTypes} selectedValues={pendingFilters.documentType} onChange={(val) => setPendingFilters(p => ({ ...p, documentType: val.map(extractCode) }))} />
                             <div className="min-w-[120px]">
                                 <label className={filterLabel}>Fecha de Corte</label>
                                 <input type="date" className={filterInputClass} value={pendingFilters.dateCutoff} onChange={(e) => setPendingFilters(p => ({ ...p, dateCutoff: e.target.value }))} />
@@ -1139,7 +1598,7 @@ const PaymentsV2 = ({
                             {!collapsedSections.summary && (
                                 <div className="space-y-2 animate-fade-in">
                                     <div className="flex justify-between items-baseline"><span className="text-[10px] font-bold text-slate-400 uppercase">Total MXN</span><span className="text-xs font-mono font-bold text-white">{formatCurrency(kpis.mxn)}</span></div>
-                                    <div className="flex justify-between items-baseline"><span className="text-[10px] font-bold text-blue-400 uppercase">Total USD</span><span className="text-xs font-mono font-bold text-blue-100">{formatCurrency(kpis.usd, 'USD')} USD</span></div>
+                                    <div className="flex justify-between items-baseline"><span className="text-[10px] font-bold text-blue-400 uppercase">Total USD</span><span className="text-xs font-mono font-bold text-blue-100">{formatCurrency(kpis.usd, 'USD')}</span></div>
 
                                     <div className="mt-2 pt-2 border-t border-slate-800 space-y-1">
                                         <div className="flex justify-between items-center">
@@ -1148,7 +1607,7 @@ const PaymentsV2 = ({
                                         </div>
                                         <div className="flex justify-between items-center">
                                             <span className="text-[9px] font-bold text-red-400 uppercase tracking-tighter">Vencidas USD</span>
-                                            <span className="text-[10px] font-mono text-red-200">{formatCurrency(kpis.overdueUsd, 'USD')} USD</span>
+                                            <span className="text-[10px] font-mono text-red-200">{formatCurrency(kpis.overdueUsd, 'USD')}</span>
                                         </div>
                                     </div>
 
@@ -1159,7 +1618,7 @@ const PaymentsV2 = ({
                                         </div>
                                         <div className="flex justify-between items-center">
                                             <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-tighter">Por Vencer USD</span>
-                                            <span className="text-[10px] font-mono text-emerald-200">{formatCurrency(kpis.upcomingUsd, 'USD')} USD</span>
+                                            <span className="text-[10px] font-mono text-emerald-200">{formatCurrency(kpis.upcomingUsd, 'USD')}</span>
                                         </div>
                                     </div>
 
@@ -1169,7 +1628,7 @@ const PaymentsV2 = ({
                                                 <span className="text-[10px] font-black text-emerald-500 uppercase tracking-tighter">Gran Total</span>
                                                 <div className="flex items-center gap-1 bg-slate-800 px-1.5 py-0.5 rounded border border-slate-700" onClick={e => e.stopPropagation()}>
                                                     <span className="text-[8px] font-bold text-slate-400 uppercase">T.C.</span>
-                                                    <input type="number" step="0.01" className="w-10 bg-transparent text-[10px] font-mono text-blue-400 outline-none" value={exchangeRate} onChange={(e) => setExchangeRate(parseFloat(e.target.value) || 0)} />
+                                                    <input type="number" step="0.01" className="w-10 bg-transparent text-[10px] font-mono text-blue-400 outline-none" value={exchangeRate} onChange={(e) => { const v = parseFloat(e.target.value) || 0; setExchangeRate(v); localStorage.setItem('hs_exchange_rate', String(v)); }} />
                                                 </div>
                                             </div>
                                             <p className="text-xl font-black text-white tracking-tighter tabular-nums">{formatCurrency(kpis.mxn + (kpis.usd * exchangeRate), 'MXN')}</p>
@@ -1201,7 +1660,6 @@ const PaymentsV2 = ({
                                 <p className="text-[9px] font-black text-slate-400 uppercase tracking-wider">Total Por Pagar</p>
                                 <div className="flex items-baseline gap-2">
                                     <p className="text-[11px] font-bold text-slate-700 truncate">MXN {formatCurrency(kpis.mxn, 'MXN')}</p>
-                                    <span className="text-[8px] font-bold text-emerald-500">+12%</span>
                                 </div>
                                 <p className="text-[11px] font-bold text-slate-700 truncate">USD {formatCurrency(kpis.usd, 'USD')}</p>
                             </div>
@@ -1243,54 +1701,61 @@ const PaymentsV2 = ({
                                 <input
                                     type="text"
                                     placeholder="Buscar proveedor o factura..."
-                                    className="w-full pl-7 pr-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-primary/20"
+                                    className="w-full pl-7 pr-3 py-1.5 bg-white border border-slate-100 rounded-lg text-xs outline-none focus:ring-2 focus:ring-primary/20"
                                     value={searchTerm}
                                     onChange={(e) => setSearchTerm(e.target.value)}
                                 />
                             </div>
 
                             {/* Botón de Acción Masiva (Dinámico por Nodo) */}
-                            {pendingTotal > 0 && (
-                                <button onClick={handleAuthorizeAll}
-                                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-black text-emerald-700 border border-emerald-300 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition-colors shrink-0">
-                                    <CheckCircle2 size={13} />
-                                    {selectedNode ? 'AÑADIR SECCIÓN' : 'AÑADIR TODO'} ({pendingTotal})
-                                </button>
-                            )}
-
-                            {/* REQ-008: Botones de procesamiento con validación DLL pre-envío */}
-                            {(authorizedInvoices || []).length > 0 && (<>
-                                <button
-                                    onClick={() => handleProcesarPagos('H2H')}
-                                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-black text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors shadow-sm shrink-0"
-                                    title="Validar reglas DLL y procesar vía Host-to-Host"
-                                >
-                                    <Send size={13} /> PROCESAR H2H
-                                </button>
-                                <button
-                                    onClick={() => handleProcesarPagos('MANUAL')}
-                                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-black text-slate-700 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-lg transition-colors shadow-sm shrink-0"
-                                    title="Validar reglas DLL para pago manual"
-                                >
-                                    <CheckCircle2 size={13} /> VALIDAR GRUPOS
-                                </button>
-                            </>)}
-
-                            {/* Generar batch con facturas autorizadas */}
-                            {(authorizedInvoices || []).length > 0 && (
-                                <button onClick={handleFinalizeBatch}
-                                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-black text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors shadow-sm shrink-0 animate-pulse">
-                                    <Lock size={13} /> GENERAR BATCH ({authorizedInvoices.length})
-                                </button>
-                            )}
-
                             <button onClick={handleExportExcel}
                                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-600 border border-slate-200 bg-white hover:bg-slate-100 rounded-lg transition-colors shrink-0">
                                 <Download size={13} /> Excel
                             </button>
+
+                            <button
+                                onClick={handleAuthorizeAll}
+                                disabled={pendingTotal === 0}
+                                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-black border rounded-lg transition-colors shrink-0 ${pendingTotal === 0
+                                    ? 'text-slate-300 border-slate-200 bg-white cursor-not-allowed'
+                                    : 'text-emerald-700 border-emerald-300 bg-emerald-50 hover:bg-emerald-100'
+                                    }`}>
+                                    <CheckCircle2 size={13} />
+                                    {selectedNode ? 'AÑADIR SECCIÓN' : 'AÑADIR TODO'} ({pendingTotal})
+                            </button>
+
+                            {/* RN-021: PROCESAR H2H y VALIDAR GRUPOS removidos — pertenecen al módulo Pagos */}
+
+                            {/* RN-023: Botón "GENERAR BATCH" movido al panel derecho en sección de totales */}
+
+                            <button
+                                onClick={handleCleanAllRecovered}
+                                disabled={cleanAllEligibleTotal === 0}
+                                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-black border rounded-lg transition-colors shrink-0 ${cleanAllEligibleTotal === 0
+                                    ? 'text-slate-300 border-slate-200 bg-white cursor-not-allowed'
+                                    : 'text-red-700 border-red-300 bg-red-50 hover:bg-red-100'
+                                    }`}
+                                title="Liberar las facturas visibles que no están en el Batch Abierto"
+                            >
+                                <Trash2 size={13} />
+                                LIBERAR TODO ({cleanAllEligibleTotal})
+                            </button>
                             <button onClick={() => setIsModalOpen(true)}
                                 className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-black text-white bg-teal-600 border border-teal-700 hover:bg-teal-700 rounded-lg transition-all shrink-0 shadow-md">
                                 <Plus size={13} /> AGREGAR FACTURA
+                            </button>
+                            {/* CCB-010: LISTA BATCH — batches temporales guardados */}
+                            <button
+                                onClick={() => { setSavedBatches(loadTempBatches()); setShowBatchList(true); }}
+                                className="relative flex items-center gap-1.5 px-3 py-1.5 text-xs font-black text-slate-700 border border-slate-300 bg-white hover:bg-amber-50 hover:border-amber-400 rounded-lg transition-all shrink-0 shadow-sm"
+                                title="Ver batches guardados temporalmente"
+                            >
+                                <Archive size={13} className="text-amber-500" /> LISTA BATCH
+                                {savedBatches.length > 0 && (
+                                    <span className="absolute -top-2 -right-2 min-w-[18px] h-[18px] flex items-center justify-center bg-amber-500 text-white text-[9px] font-black rounded-full px-1 shadow">
+                                        {savedBatches.length}
+                                    </span>
+                                )}
                             </button>
                         </div>
 
@@ -1299,34 +1764,38 @@ const PaymentsV2 = ({
                                 <thead className="sticky top-0 z-10">
                                     <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-black uppercase tracking-widest text-[8px]">
                                         {[
-                                            { id: 'company', label: 'COMPAÑIA' },
-                                            { id: 'description_tran_doc_type', label: 'TIPO DOC' },
-                                            { id: 'invoice', label: 'INVOICE NUM' },
+                                            { id: 'company', label: 'COMPAÑÍA' },
+                                            { id: 'description_tran_doc_type', label: 'TIPO' },
+                                            { id: 'invoice', label: 'N° FACTURA' },
                                             { id: 'po', label: 'PO' },
-                                            { id: 'providerName', label: 'NOMBRE PROV' },
-                                            { id: 'description', label: 'DESCRIPCION' },
-                                            { id: 'comments', label: 'COMMENTS' },
+                                            { id: 'folioGastos', label: 'FOLIO GASTOS' },
+                                            { id: 'folioSolicitud', label: 'FOLIO SOLICITUD' },
+                                            { id: 'providerName', label: 'PROVEEDOR' },
+                                            { id: 'description', label: 'DESCRIPCIÓN' },
+                                            { id: 'comments', label: 'COMENTARIOS' },
                                             { id: 'invoice_date', label: 'FECHA FACTURA' },
-                                            { id: 'dueDate', label: 'DUE DATE' },
-                                            { id: 'terms', label: 'TERMS' },
+                                            { id: 'dueDate', label: 'FECHA VENCIMIENTO' },
+                                            { id: 'terms', label: 'TÉRMINOS' },
                                             { id: 'currency', label: 'MONEDA' },
                                             { id: 'amount', label: 'BALANCE' },
-                                            { id: 'vencimiento_status', label: 'ETIQUETA VENCIMIENTO' },
-                                            { id: 'hasFiscalError', label: 'ESTATUS' }
+                                            { id: 'parcialidad', label: 'PARCIALIDAD' },
+                                            { id: 'vencimiento_status', label: 'VENCIMIENTO' },
+                                            { id: 'hasFiscalError', label: 'ESTADO FACTURA' },
                                         ].map((col) => (
                                             <th
                                                 key={col.id}
+                                                title={col.title || ''}
                                                 className="px-3 py-3 cursor-pointer hover:text-primary whitespace-nowrap bg-slate-50 transition-colors"
                                                 onClick={() => handleSort(col.id)}
                                             >
                                                 <div className={`flex items-center gap-1 ${col.id === 'amount' ? 'justify-end' : ''}`}>
-                                                    {col.label} {getSortIcon(col.id)}
+                                                    {col.label}
+                                                    {col.amber && <span className="text-amber-400">*</span>}
+                                                    {getSortIcon(col.id)}
                                                 </div>
                                             </th>
                                         ))}
-                                        <th className="px-2 py-2.5 text-center w-20" title="Referencia 1 — solo aplica a este evento (INV-002)">REF 1 <span className="text-amber-400">*</span></th>
-                                        <th className="px-2 py-2.5 text-center w-20" title="Referencia 2 — solo aplica a este evento (INV-002)">REF 2 <span className="text-amber-400">*</span></th>
-                                        <th className="px-3 py-2.5 text-center w-24 sticky right-0 bg-slate-100 border-l shadow-[-4px_0_10px_rgba(0,0,0,0.05)] z-20">ACCION</th>
+                                        <th className="px-3 py-2.5 text-center w-[220px] min-w-[220px] max-w-[220px] sticky right-0 bg-slate-100 border-l shadow-[-4px_0_10px_rgba(0,0,0,0.05)] z-20">ACCIÓN</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
@@ -1338,28 +1807,60 @@ const PaymentsV2 = ({
                                         </tr>
                                     ) : paginatedData.map((inv, idx) => {
                                         const isAuth = inv._authStatus === 'authorized';
+                                        const isBulkCleanPreview = bulkCleanPreviewIds.has(inv.id);
+                                        const isExcludedFromBatch = isExcludedInvoice(inv);
                                         const today = new Date().toISOString().split('T')[0];
                                         const isOverdue = inv.dueDate < today;
+                                        const rowHighlightClass = isBulkCleanPreview
+                                            ? 'bg-slate-100 hover:bg-slate-100'
+                                            : isExcludedFromBatch
+                                                ? 'bg-red-50/70 hover:bg-red-100/70 shadow-[inset_4px_0_0_#ef4444]'
+                                                : isAuth
+                                                    ? 'bg-emerald-50/60 hover:bg-emerald-50'
+                                                    : 'hover:bg-blue-50/30';
+                                        const actionCellBackgroundClass = isBulkCleanPreview
+                                            ? 'bg-slate-100'
+                                            : isExcludedFromBatch
+                                                ? 'bg-red-50/95 group-hover:bg-red-100/90'
+                                                : 'bg-white/90 group-hover:bg-slate-50';
 
                                         return (
-                                            <tr key={`${inv.id}-${idx}`} className={`transition-colors ${isAuth ? 'bg-emerald-50/60 hover:bg-emerald-50' : 'hover:bg-blue-50/30'}`}>
+                                            <tr key={`${inv.id}-${idx}`} className={`group transition-colors ${rowHighlightClass}`}>
                                                 <td className="px-3 py-3 font-medium text-slate-700 whitespace-nowrap">{inv.meta?.company}</td>
                                                 <td className="px-3 py-3 text-slate-500 uppercase text-[9px]">{inv.meta?.description_tran_doc_type || inv.meta?.document_type}</td>
                                                 <td className="px-3 py-3">
                                                     <div className="flex items-center gap-1.5 font-mono text-slate-600 font-bold">
                                                         {inv.meta?.invoice || String(inv.id || '').slice(0, 10)}
                                                         {inv.meta?.isH2H && <span className="bg-indigo-100 text-indigo-700 text-[7px] px-1 rounded font-black">H2H</span>}
+                                                        {isExcludedFromBatch && (
+                                                            <span
+                                                                className="bg-red-50 text-red-700 border border-red-200 text-[7px] px-1.5 py-0.5 rounded-full font-black uppercase tracking-wide"
+                                                                title={`Excluida del batch ${inv.batchExclusion?.batchId || inv.meta?.excluded_from_batch_id || ''}`}
+                                                            >
+                                                                Excluida
+                                                            </span>
+                                                        )}
                                                     </div>
                                                 </td>
+                                                {/* PO */}
                                                 <td className="px-3 py-3 text-slate-400 font-mono">{inv.meta?.po || '—'}</td>
+                                                {/* CCB-008: Folio Gastos y Folio Solicitud — campos UD Epicor, solo lectura */}
+                                                <td className="px-3 py-3 text-slate-400 font-mono">{inv.meta?.folio_gastos_c || inv.meta?.folioGastos || '—'}</td>
+                                                <td className="px-3 py-3 text-slate-400 font-mono">{inv.meta?.folio_solicitud_c || inv.meta?.folioSolicitud || '—'}</td>
+                                                {/* Proveedor / Descripción */}
                                                 <td className="px-3 py-3 font-black text-slate-800 whitespace-nowrap">{inv.providerName}</td>
                                                 <td className="px-3 py-3 text-slate-500 truncate max-w-[140px]" title={inv.meta?.description}>{inv.meta?.description || '—'}</td>
+                                                {/* Comentarios */}
                                                 <td className="px-3 py-3 text-slate-400 italic truncate max-w-[120px]" title={inv.meta?.comments}>{inv.meta?.comments || '—'}</td>
+                                                {/* Fechas / Términos / Moneda / Importes */}
                                                 <td className="px-3 py-3 text-slate-500 whitespace-nowrap">{inv.meta?.invoice_date || '—'}</td>
                                                 <td className="px-3 py-3 text-slate-600 font-bold whitespace-nowrap">{formatDate(inv.dueDate)}</td>
                                                 <td className="px-3 py-3 text-slate-400 text-[9px]">{inv.meta?.terms || '—'}</td>
                                                 <td className="px-3 py-3 font-bold text-slate-400">{inv.currency}</td>
                                                 <td className="px-3 py-3 text-right font-black text-slate-800">{formatCurrency(inv.amount, inv.currency)}</td>
+                                                <td className="px-3 py-3 text-right font-bold text-blue-600">
+                                                    {parcialidades[inv.id]?.importe ? formatCurrency(parcialidades[inv.id]?.importe) : "—"}
+                                                </td>
                                                 <td className="px-3 py-3 text-center">
                                                     <span className={`px-2 py-0.5 rounded-full text-[8px] font-black ${isOverdue ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
                                                         {isOverdue ? 'VENCIDO' : 'POR VENCER'}
@@ -1368,7 +1869,7 @@ const PaymentsV2 = ({
                                                 <td className="px-3 py-3 text-center">
                                                     {inv.meta?.hasFiscalError ? (
                                                         <div className="group relative inline-block">
-                                                            <Badge status="danger" className="text-[8px] py-0">FISCAL ERR</Badge>
+                                                            <Badge status="danger" className="text-[8px] py-0">ERROR FISCAL</Badge>
                                                             <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block w-48 p-2 bg-slate-800 text-white text-[10px] rounded shadow-xl z-50">
                                                                 {inv.meta?.validationErrors?.[0] || "Error en validación fiscal"}
                                                             </div>
@@ -1377,43 +1878,38 @@ const PaymentsV2 = ({
                                                         <Badge status="success" className="text-[8px] py-0">VIGENTE</Badge>
                                                     )}
                                                 </td>
-                                                {/* INV-002: Referencia de evento — aislada, no persiste en Epicor */}
-                                                <td className="px-2 py-2">
-                                                    <input
-                                                        type="text"
-                                                        value={getRefEvento(inv, 'ref1')}
-                                                        onChange={e => handleReferenciaEvento(inv.id, 'ref1', e.target.value)}
-                                                        placeholder={inv.ref1 || '—'}
-                                                        title="Referencia 1 (solo aplica a este evento)"
-                                                        className="w-20 px-1.5 py-0.5 text-[9px] border border-slate-200 rounded outline-none focus:ring-1 focus:ring-primary font-mono bg-yellow-50"
-                                                    />
-                                                </td>
-                                                <td className="px-2 py-2">
-                                                    <input
-                                                        type="text"
-                                                        value={getRefEvento(inv, 'ref2')}
-                                                        onChange={e => handleReferenciaEvento(inv.id, 'ref2', e.target.value)}
-                                                        placeholder={inv.ref2 || '—'}
-                                                        title="Referencia 2 (solo aplica a este evento)"
-                                                        className="w-20 px-1.5 py-0.5 text-[9px] border border-slate-200 rounded outline-none focus:ring-1 focus:ring-primary font-mono bg-yellow-50"
-                                                    />
-                                                </td>
-                                                <td className="px-3 py-3 text-center sticky right-0 bg-white/90 backdrop-blur-sm group-hover:bg-slate-50 transition-colors shadow-[-4px_0_10px_rgba(0,0,0,0.05)] border-l">
-                                                    {isAuth ? (
+                                                <td className={`px-3 py-3 text-center w-[220px] min-w-[220px] max-w-[220px] sticky right-0 backdrop-blur-sm transition-colors shadow-[-4px_0_10px_rgba(0,0,0,0.05)] border-l ${actionCellBackgroundClass}`}>
+                                                    <div className="flex items-center justify-center gap-1.5 flex-nowrap">
+                                                        {isAuth ? (
+                                                            <>
+                                                                <button
+                                                                    onClick={() => handleRevokeInvoice(inv)}
+                                                                    className="inline-flex items-center justify-center text-[9px] font-black px-2.5 py-1.5 bg-amber-500 text-white hover:bg-amber-600 rounded shadow-sm transition-all uppercase tracking-normal whitespace-nowrap"
+                                                                >
+                                                                    Devolver
+                                                                </button>
+                                                            </>
+                                                        ) : (
+                                                            <button
+                                                                onClick={() => handleAuthorizeInvoice(inv)}
+                                                                className="inline-flex items-center justify-center text-[9px] font-black px-2.5 py-1.5 bg-emerald-500 text-white hover:bg-emerald-600 rounded shadow-sm transition-all uppercase tracking-normal whitespace-nowrap"
+                                                            >
+                                                                Añadir
+                                                            </button>
+                                                        )}
                                                         <button
-                                                            onClick={() => handleRevokeInvoice(inv)}
-                                                            className="text-[9px] font-black px-2 py-1 bg-amber-500 text-white hover:bg-amber-600 rounded shadow-sm transition-all w-full uppercase tracking-tighter"
+                                                            onClick={() => handleCleanInvoice(inv)}
+                                                            className="inline-flex items-center justify-center text-[9px] font-black px-2.5 py-1.5 bg-red-500 text-white hover:bg-red-600 rounded shadow-sm transition-all uppercase tracking-normal whitespace-nowrap"
                                                         >
-                                                            Devolver
+                                                            Liberar
                                                         </button>
-                                                    ) : (
                                                         <button
-                                                            onClick={() => handleAuthorizeInvoice(inv)}
-                                                            className="text-[9px] font-black px-2 py-1 bg-emerald-500 text-white hover:bg-emerald-600 rounded shadow-sm transition-all w-full uppercase tracking-tighter"
+                                                            onClick={() => handleOpenParcialidadModal(inv)}
+                                                            className="inline-flex items-center justify-center text-[9px] font-black px-2.5 py-1.5 bg-blue-500 text-white hover:bg-blue-600 rounded shadow-sm transition-all uppercase tracking-normal whitespace-nowrap"
                                                         >
-                                                            Añadir
+                                                            Parcial
                                                         </button>
-                                                    )}
+                                                    </div>
                                                 </td>
                                             </tr>
                                         );
@@ -1431,6 +1927,165 @@ const PaymentsV2 = ({
                                 <button onClick={() => setPage(Math.max(1, page - 1))} className="p-1 rounded hover:bg-slate-200 disabled:opacity-30" disabled={page === 1}><ChevronLeft size={15} /></button>
                                 <button onClick={() => setPage(Math.min(totalPages, page + 1))} className="p-1 rounded hover:bg-slate-200 disabled:opacity-30" disabled={page === totalPages}><ChevronRight size={15} /></button>
                             </div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* RN-023 — Panel lateral derecho: Facturas seleccionadas (árbol Empresa → Proveedor → Facturas) */}
+                <div className="relative flex shrink-0 group">
+                    {/* Gatillo de colapso — borde izquierdo del panel */}
+                    <button
+                        onClick={() => setIsRightPanelOpen(v => !v)}
+                        className={`absolute top-1/2 -translate-y-1/2 -left-3 z-40 w-6 h-10 bg-white border border-slate-200 rounded-full shadow-md flex items-center justify-center text-slate-400 hover:text-primary transition-all duration-300 hover:bg-slate-50 ${!isRightPanelOpen ? 'translate-x-0 opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                        title={isRightPanelOpen ? "Ocultar selección" : "Ver selección activa"}
+                    >
+                        {isRightPanelOpen ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+                    </button>
+
+                    <div className={`flex flex-col gap-2 min-h-0 border border-slate-200 rounded-xl bg-white shadow-sm transition-all duration-300 ease-in-out ${isRightPanelOpen ? 'w-[300px] p-2 opacity-100 overflow-y-auto' : 'w-0 p-0 border-0 opacity-0 overflow-hidden'}`}>
+
+                        {/* Header del panel */}
+                        <div className="px-3 py-2 border-b border-b-0 flex items-center justify-between text-white rounded-lg shrink-0" style={{ backgroundColor: HS.tealDark }}>
+                            <div className="flex items-center gap-2 text-[9px] font-black uppercase tracking-widest">
+                                <Layers size={14} className="text-blue-400" />
+                                <span>Selección Activa</span>
+                            </div>
+                            <Badge status="info" className="text-[9px] px-2 py-0 font-mono">
+                                {(authorizedInvoices || []).length} Docs
+                            </Badge>
+                        </div>
+
+                        {/* Árbol Empresa → Proveedor → Facturas */}
+                        <div className="flex-1 overflow-y-auto p-1 min-h-0">
+                            {Object.entries(authHierarchy).length === 0 ? (
+                                <div className="flex flex-col items-center justify-center h-24 text-slate-300 text-center gap-2">
+                                    <Layers size={24} className="opacity-30" />
+                                    <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Sin facturas seleccionadas</p>
+                                </div>
+                            ) : Object.entries(authHierarchy).map(([coName, coData]) => (
+                                <div key={coName} className="my-0.5">
+                                    {/* Nivel: Empresa */}
+                                    <div
+                                        className="flex items-center py-1.5 px-2 rounded-md cursor-pointer hover:bg-slate-50 transition-colors"
+                                        onClick={() => toggleRightNode(coName)}
+                                    >
+                                        <ChevronRight size={10} className={`shrink-0 text-slate-400 transition-transform ${!rightPanelNodes[coName] ? 'rotate-90' : ''}`} />
+                                        <span className="text-[10px] font-black uppercase truncate tracking-tight text-slate-700 ml-1.5 flex-1">{coName}</span>
+                                        <div className="flex flex-col items-end ml-2 font-mono shrink-0">
+                                            {coData.mxn > 0 && <span className="text-[9px] text-slate-600">{formatCurrency(coData.mxn).replace('$', '')}</span>}
+                                            {coData.usd > 0 && <span className="text-[9px] text-blue-600 font-bold">{formatCurrency(coData.usd, 'USD').replace('$', '')}</span>}
+                                        </div>
+                                    </div>
+
+                                    {/* Proveedores */}
+                                    {!rightPanelNodes[coName] && (
+                                        <div className="ml-3 border-l border-slate-100 pl-2">
+                                            {Object.entries(coData.providers).map(([pName, pData]) => {
+                                                const pKey = `${coName}::${pName}`;
+                                                return (
+                                                    <div key={pKey} className="my-0.5">
+                                                        <div
+                                                            className="flex items-center py-1 px-2 rounded-md cursor-pointer hover:bg-slate-50 transition-colors"
+                                                            onClick={() => toggleRightNode(pKey)}
+                                                        >
+                                                            <ChevronRight size={9} className={`shrink-0 text-slate-300 transition-transform ${!rightPanelNodes[pKey] ? 'rotate-90' : ''}`} />
+                                                            <span className="text-[9px] font-bold truncate text-slate-600 ml-1.5 flex-1">{pName}</span>
+                                                            <div className="flex flex-col items-end ml-1 font-mono shrink-0">
+                                                                {pData.mxn > 0 && <span className="text-[8px] text-slate-500">{formatCurrency(pData.mxn).replace('$', '')}</span>}
+                                                                {pData.usd > 0 && <span className="text-[8px] text-blue-500">{formatCurrency(pData.usd, 'USD').replace('$', '')}</span>}
+                                                            </div>
+                                                        </div>
+
+                                                        {/* Facturas */}
+                                                        {!rightPanelNodes[pKey] && (
+                                                            <div className="ml-3 border-l border-slate-100 pl-2">
+                                                                {pData.invoices.map(inv => (
+                                                                    <div key={inv.id} className="flex items-center py-0.5 px-2 text-[8px] text-slate-400 hover:bg-slate-50 rounded gap-1 group">
+                                                                        <span className="font-mono truncate flex-1">{inv.meta?.invoice || inv.id}</span>
+                                                                        <span className="font-bold shrink-0 text-blue-600">{formatCurrency(parcialidades[inv.id]?.importe || inv.amount, inv.currency).replace('$', '')}</span>
+                                                                        <button
+                                                                            onClick={() => handleExcludeInvoiceFromSelection(inv)}
+                                                                            className="p-0.5 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                                                                            title="Excluir de la selección"
+                                                                        >
+                                                                            <X size={10} />
+                                                                        </button>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+
+                        {/* Resumen totales - Modelo extendido (Vencidas, Por Vencer, etc.) */}
+                        <div className="shrink-0 rounded-xl p-3 space-y-2" style={{ backgroundColor: HS.tealDark }}>
+                            <div className="flex justify-between items-baseline">
+                                <span className="text-[10px] font-bold text-slate-400 uppercase">Total MXN</span>
+                                <span className="text-xs font-mono font-bold text-white">{formatCurrency(authKpis.mxn)}</span>
+                            </div>
+                            <div className="flex justify-between items-baseline">
+                                <span className="text-[10px] font-bold text-blue-400 uppercase">Total USD</span>
+                                <span className="text-xs font-mono font-bold text-blue-100">{formatCurrency(authKpis.usd, 'USD')}</span>
+                            </div>
+
+                            <div className="mt-2 pt-2 border-t border-slate-800 space-y-1">
+                                <div className="flex justify-between items-center">
+                                    <span className="text-[9px] font-bold text-red-400 uppercase tracking-tighter">Vencidas MN</span>
+                                    <span className="text-[10px] font-mono text-red-200">{formatCurrency(authKpis.overdueMxn, 'MXN')}</span>
+                                </div>
+                                <div className="flex justify-between items-center">
+                                    <span className="text-[9px] font-bold text-red-400 uppercase tracking-tighter">Vencidas USD</span>
+                                    <span className="text-[10px] font-mono text-red-200">{formatCurrency(authKpis.overdueUsd, 'USD')}</span>
+                                </div>
+                            </div>
+
+                            <div className="mt-2 pt-2 border-t border-slate-800 space-y-1">
+                                <div className="flex justify-between items-center">
+                                    <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-tighter">Por Vencer MN</span>
+                                    <span className="text-[10px] font-mono text-emerald-200">{formatCurrency(authKpis.upcomingMxn, 'MXN')}</span>
+                                </div>
+                                <div className="flex justify-between items-center">
+                                    <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-tighter">Por Vencer USD</span>
+                                    <span className="text-[10px] font-mono text-emerald-200">{formatCurrency(authKpis.upcomingUsd, 'USD')}</span>
+                                </div>
+                            </div>
+
+                            <div className="pt-3 border-t border-slate-700 mt-2">
+                                <div className="flex justify-between items-center">
+                                    <div className="flex flex-col gap-1">
+                                        <span className="text-[10px] font-black text-emerald-500 uppercase tracking-tighter">Gran Total</span>
+                                        <div className="flex items-center gap-1 bg-slate-800 px-1.5 py-0.5 rounded border border-slate-700" onClick={e => e.stopPropagation()}>
+                                            <span className="text-[8px] font-bold text-slate-400 uppercase">T.C.</span>
+                                            <input type="number" step="0.01" className="w-10 bg-transparent text-[10px] font-mono text-blue-400 outline-none" value={exchangeRate} onChange={(e) => { const v = parseFloat(e.target.value) || 0; setExchangeRate(v); localStorage.setItem('hs_exchange_rate', String(v)); }} />
+                                        </div>
+                                    </div>
+                                    <p className="text-xl font-black text-white tracking-tighter tabular-nums">{formatCurrency(authKpis.mxn + (authKpis.usd * exchangeRate), 'MXN')}</p>
+                                </div>
+                            </div>
+
+                            {(authorizedInvoices || []).length > 0 && (
+                                <div className="flex flex-col gap-1.5 mt-2">
+                                    {/* CCB-010: Guardar temporalmente */}
+                                    <button
+                                        onClick={() => setShowSaveTempConfirm(true)}
+                                        className="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 text-[9px] font-black text-amber-700 bg-amber-50 border border-amber-300 hover:bg-amber-100 rounded-lg transition-colors shadow-sm uppercase tracking-tight"
+                                    >
+                                        <Save size={11} /> GUARDAR TEMPORALMENTE
+                                    </button>
+                                    <button
+                                        onClick={handleFinalizeBatch}
+                                        className="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 text-[9px] font-black text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors shadow-sm animate-pulse uppercase tracking-tight"
+                                    >
+                                        <Lock size={11} /> GENERAR BATCH
+                                    </button>
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -1532,11 +2187,11 @@ const PaymentsV2 = ({
                 {/* Modal de confirmación genérico */}
                 {confirmDialog && (
                     <div className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm animate-fade-in">
-                        <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 p-6 max-w-sm w-full mx-4 animate-fade-in-up">
-                            <p className="text-sm font-semibold text-slate-700 mb-6 leading-relaxed">{confirmDialog.message}</p>
+                        <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 p-6 max-w-lg w-full mx-4 animate-fade-in-up">
+                            <p className="text-sm font-semibold text-slate-700 mb-6 leading-relaxed whitespace-pre-line">{confirmDialog.message}</p>
                             <div className="flex justify-end gap-2">
                                 <button
-                                    onClick={() => setConfirmDialog(null)}
+                                    onClick={() => { confirmDialog.onCancel?.(); setConfirmDialog(null); }}
                                     className="px-4 py-2 text-xs font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
                                 >
                                     Cancelar
@@ -1545,7 +2200,7 @@ const PaymentsV2 = ({
                                     onClick={() => { confirmDialog.onConfirm(); setConfirmDialog(null); }}
                                     className="px-4 py-2 text-xs font-black text-white bg-primary hover:bg-primary/90 rounded-lg transition-colors shadow-sm"
                                 >
-                                    Confirmar
+                                    {confirmDialog.confirmLabel || 'Confirmar'}
                                 </button>
                             </div>
                         </div>
@@ -1807,6 +2462,223 @@ const PaymentsV2 = ({
                         </div>
                     </div>
                 </Modal>
+
+                {/* Modal Captura Parcialidad */}
+                <Modal
+                    isOpen={parcialidadModalInvoice !== null}
+                    onClose={() => setParcialidadModalInvoice(null)}
+                    title="Capturar Parcialidad"
+                    size="sm"
+                >
+                    {parcialidadModalInvoice && (
+                        <div className="space-y-4">
+                            {/* Datos Lectura */}
+                            <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-2">
+                                <div className="flex justify-between items-center">
+                                    <span className="text-[9px] font-bold text-slate-500 uppercase">Factura</span>
+                                    <span className="text-sm font-black text-slate-700">{parcialidadModalInvoice.meta?.invoice || '—'}</span>
+                                </div>
+                                <div className="flex justify-between items-center">
+                                    <span className="text-[9px] font-bold text-slate-500 uppercase">Estatus</span>
+                                    <span className="text-sm font-bold text-amber-600">
+                                        {parcialidadModalInvoice.status === 'AUTORIZADO' ? 'AUTORIZADO' : 'PENDIENTE'}
+                                    </span>
+                                </div>
+                                <div className="flex justify-between items-center">
+                                    <span className="text-[9px] font-bold text-slate-500 uppercase">Vencimiento</span>
+                                    <span className={`text-sm font-bold ${parcialidadModalInvoice._overdue ? 'text-red-600' : 'text-emerald-600'}`}>
+                                        {parcialidadModalInvoice._overdue ? 'VENCIDO' : 'POR VENCER'}
+                                    </span>
+                                </div>
+                                <div className="flex justify-between items-center pt-2 border-t border-slate-200">
+                                    <span className="text-[9px] font-bold text-slate-500 uppercase">Balance</span>
+                                    <span className="text-lg font-black text-slate-700 font-mono">{formatCurrency(parcialidadModalInvoice.amount)}</span>
+                                </div>
+                                <div className="flex justify-between items-center">
+                                    <span className="text-[9px] font-bold text-slate-500 uppercase">Proveedor</span>
+                                    <span className="text-sm font-bold text-slate-700">{parcialidadModalInvoice.providerName}</span>
+                                </div>
+                                <div className="flex justify-between items-center">
+                                    <span className="text-[9px] font-bold text-slate-500 uppercase">Fecha Factura</span>
+                                    <span className="text-sm font-mono text-slate-600">{parcialidadModalInvoice.meta?.invoice_date || '—'}</span>
+                                </div>
+                                <div className="flex justify-between items-center">
+                                    <span className="text-[9px] font-bold text-slate-500 uppercase">Vencimiento</span>
+                                    <span className="text-sm font-mono text-slate-600">{formatDate(parcialidadModalInvoice.dueDate)}</span>
+                                </div>
+                            </div>
+
+                            {/* Input Captura */}
+                            <div className="space-y-2">
+                                <label className="text-[9px] font-bold text-slate-500 uppercase block">Importe Parcial</label>
+                                <input
+                                    type="text"
+                                    placeholder="0.00"
+                                    value={parcialidadImporte}
+                                    onChange={(e) => {
+                                        const sanitized = e.target.value.replace(/[^\d.]/g, '');
+                                        const parts = sanitized.split('.');
+                                        const cleaned = parts.length > 2 ? `${parts[0]}.${parts[1]}` : sanitized;
+                                        const [intPart, decPart] = cleaned.split('.');
+                                        const formatted = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',') + (decPart ? `.${decPart}` : '');
+                                        setParcialidadImporte(formatted);
+                                    }}
+                                    className="w-full px-3 py-2 border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm font-mono text-right"
+                                />
+                                <p className="text-[8px] text-slate-500 font-medium">
+                                    Máximo permitido: {formatCurrency(parcialidadModalInvoice.amount)}
+                                </p>
+                            </div>
+
+                            {/* Botones */}
+                            <div className="flex gap-2 pt-2">
+                                <button
+                                    onClick={() => setParcialidadModalInvoice(null)}
+                                    className="flex-1 px-3 py-2 bg-slate-200 text-slate-700 font-bold text-xs rounded-lg hover:bg-slate-300 transition-all uppercase tracking-tighter"
+                                >
+                                    Cancelar
+                                </button>
+                                <button
+                                    onClick={handleSaveParcialidad}
+                                    className="flex-1 px-3 py-2 bg-blue-500 text-white font-bold text-xs rounded-lg hover:bg-blue-600 transition-all uppercase tracking-tighter"
+                                >
+                                    Guardar Parcialidad
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </Modal>
+
+                {/* CCB-010: Modal confirmación GUARDAR TEMPORALMENTE */}
+                {showSaveTempConfirm && (
+                    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm">
+                        <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 p-6 max-w-sm w-full mx-4">
+                            <div className="flex items-center gap-3 mb-4">
+                                <div className="p-2 rounded-xl bg-amber-50 shrink-0">
+                                    <Save size={20} className="text-amber-500" />
+                                </div>
+                                <div>
+                                    <p className="text-sm font-black text-slate-800">Guardar batch temporalmente</p>
+                                    <p className="text-[10px] text-slate-400">El batch se conservará por 48 hrs. Podrás retomarlo desde LISTA BATCH.</p>
+                                </div>
+                            </div>
+                            <div className="bg-slate-50 rounded-xl p-3 mb-4 space-y-1">
+                                <div className="flex justify-between text-[10px]">
+                                    <span className="text-slate-500 font-bold uppercase">Facturas</span>
+                                    <span className="font-black text-slate-700">{(authorizedInvoices || []).length}</span>
+                                </div>
+                                <div className="flex justify-between text-[10px]">
+                                    <span className="text-slate-500 font-bold uppercase">Destino</span>
+                                    <span className="font-black text-slate-700">{appliedFilters.destino.length > 0 ? appliedFilters.destino.join(', ') : 'Sin Destino'}</span>
+                                </div>
+                                <div className="flex justify-between text-[10px]">
+                                    <span className="text-slate-500 font-bold uppercase">Expira en</span>
+                                    <span className="font-black text-amber-600">48 horas</span>
+                                </div>
+                            </div>
+                            <div className="flex gap-2">
+                                <button
+                                    onClick={() => setShowSaveTempConfirm(false)}
+                                    className="flex-1 px-3 py-2 text-xs font-bold text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
+                                >
+                                    Cancelar
+                                </button>
+                                <button
+                                    onClick={handleSaveTempBatch}
+                                    className="flex-1 px-3 py-2 text-xs font-black text-white bg-amber-500 hover:bg-amber-600 rounded-lg transition-colors shadow-sm"
+                                >
+                                    Confirmar guardado
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* CCB-010: Modal LISTA BATCH */}
+                {showBatchList && (
+                    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm">
+                        <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 p-6 max-w-lg w-full mx-4 max-h-[80vh] flex flex-col">
+                            {/* Header */}
+                            <div className="flex items-center justify-between mb-4 shrink-0">
+                                <div className="flex items-center gap-2">
+                                    <div className="p-2 rounded-xl bg-amber-50 shrink-0">
+                                        <Archive size={18} className="text-amber-500" />
+                                    </div>
+                                    <div>
+                                        <p className="text-sm font-black text-slate-800 uppercase tracking-tight">Lista Batch</p>
+                                        <p className="text-[10px] text-slate-400">Batches guardados temporalmente · máx 48 hrs</p>
+                                    </div>
+                                </div>
+                                <button onClick={() => setShowBatchList(false)} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors">
+                                    <X size={16} />
+                                </button>
+                            </div>
+
+                            {/* Aviso batch activo */}
+                            {(authorizedInvoices || []).length > 0 && (
+                                <div className="mb-3 flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 shrink-0">
+                                    <AlertTriangle size={13} className="text-amber-500 shrink-0" />
+                                    <p className="text-[10px] text-amber-700 font-bold">Hay un batch en proceso. Ciérralo o guárdalo antes de editar uno de la lista.</p>
+                                </div>
+                            )}
+
+                            {/* Lista */}
+                            <div className="flex-1 overflow-y-auto min-h-0 space-y-2">
+                                {savedBatches.length === 0 ? (
+                                    <div className="flex flex-col items-center justify-center h-32 text-slate-300 gap-2">
+                                        <Archive size={28} className="opacity-30" />
+                                        <p className="text-[11px] text-slate-400 font-bold">Sin batches guardados</p>
+                                    </div>
+                                ) : savedBatches.map(batch => {
+                                    const nowTs = new Date().getTime();
+                                    const expiresInMs = TEMP_TTL_MS - (nowTs - batch.savedAt);
+                                    const expiresInHrs = Math.floor(expiresInMs / 3600000);
+                                    const isExpiringSoon = expiresInHrs < 6;
+                                    return (
+                                        <div key={batch.id} className={`border rounded-xl p-3 ${isExpiringSoon ? 'border-red-200 bg-red-50/30' : 'border-slate-200 bg-slate-50/50'}`}>
+                                            <div className="flex items-start justify-between gap-2">
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="flex items-center gap-2 mb-1">
+                                                        <span className={`text-[8px] font-black px-1.5 py-0.5 rounded-full uppercase ${batch.status === 'rectificacion' ? 'bg-orange-100 text-orange-700' : 'bg-amber-100 text-amber-700'}`}>
+                                                            {batch.status === 'rectificacion' ? 'Rectificación' : 'Temporal'}
+                                                        </span>
+                                                        <span className="text-[9px] text-slate-400 font-mono truncate">{batch.id}</span>
+                                                    </div>
+                                                    <p className="text-[11px] font-black text-slate-700 truncate">{batch.destino}</p>
+                                                    <div className="flex items-center gap-3 mt-1">
+                                                        <span className="text-[9px] text-slate-500">{batch.invoiceCount} factura{batch.invoiceCount !== 1 ? 's' : ''}</span>
+                                                        {batch.totalMXN > 0 && <span className="text-[9px] font-mono text-slate-600">{formatCurrency(batch.totalMXN, 'MXN')}</span>}
+                                                        {batch.totalUSD > 0 && <span className="text-[9px] font-mono text-blue-600">{formatCurrency(batch.totalUSD, 'USD')}</span>}
+                                                    </div>
+                                                    <div className={`flex items-center gap-1 mt-1 ${isExpiringSoon ? 'text-red-500' : 'text-slate-400'}`}>
+                                                        <Clock size={9} />
+                                                        <span className="text-[9px]">Guardado hace {formatTempAge(batch.savedAt, nowTs)} · expira en {expiresInHrs}h</span>
+                                                    </div>
+                                                </div>
+                                                <div className="flex flex-col gap-1 shrink-0">
+                                                    <button
+                                                        onClick={() => handleEditTempBatch(batch)}
+                                                        disabled={(authorizedInvoices || []).length > 0}
+                                                        className="flex items-center gap-1 px-2.5 py-1.5 text-[9px] font-black text-white bg-teal-600 hover:bg-teal-700 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg transition-colors"
+                                                        title={(authorizedInvoices || []).length > 0 ? 'Cierra el batch activo antes de editar' : 'Cargar este batch'}
+                                                    >
+                                                        <Pencil size={10} /> EDITAR
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleDeleteTempBatch(batch.id)}
+                                                        className="flex items-center gap-1 px-2.5 py-1.5 text-[9px] font-bold text-slate-500 border border-slate-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 rounded-lg transition-colors"
+                                                    >
+                                                        <Trash2 size={10} /> Eliminar
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     );

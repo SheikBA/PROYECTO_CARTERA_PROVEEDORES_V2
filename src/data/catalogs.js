@@ -39,9 +39,22 @@ export const CATALOG_BANCOS_INICIAL = [
 ];
 
 export const CATALOG_COMPANIAS_INICIAL = [
-    { company: "FOTUR", company_name: "Fomento Turístico S.A. de C.V.", country: "Mexico" },
-    { company: "HSH", company_name: "Hotel Shops Hub", country: "Mexico" },
-    { company: "HSH_JAM", company_name: "Hotel Shops Jamaica Ltd", country: "Jamaica" }
+    { company: "FOTUR",    company_name: "Fomento Turístico S.A. de C.V.",    country: "Mexico"     },
+    { company: "GPFSERV",  company_name: "GPF Servicios S.A. de C.V.",        country: "Mexico"     },
+    { company: "HSPRO",    company_name: "Hotel Shops Pro S.A. de C.V.",       country: "Mexico"     },
+    { company: "CABO77",   company_name: "Cabo 77 S.A. de C.V.",              country: "Mexico"     },
+    { company: "PTO85",    company_name: "Puerto 85 S.A. de C.V.",            country: "Mexico"     },
+    { company: "PTOHS",    company_name: "Puerto Hotel Shops S.A. de C.V.",   country: "Mexico"     },
+    { company: "PTOARENA", company_name: "Puerto Arena S.A. de C.V.",         country: "Mexico"     },
+    { company: "HQPEN7",   company_name: "HQ Península 7 S.A. de C.V.",      country: "Mexico"     },
+    { company: "HQPHOTO",  company_name: "HQ Photo S.A. de C.V.",            country: "Mexico"     },
+    { company: "HQISLA",   company_name: "HQ Isla S.A. de C.V.",             country: "Mexico"     },
+    { company: "PTOHSRD",  company_name: "Puerto HS RD S.A. de C.V.",        country: "Mexico"     },
+    { company: "INSPRTRD", company_name: "Inspiretrd S.A. de C.V.",          country: "Mexico"     },
+    { company: "FOTJMD",   company_name: "Fomento Turístico Jamaica Ltd",     country: "Jamaica"    },
+    { company: "PELJAM",   company_name: "Pel Jamaica Ltd",                   country: "Jamaica"    },
+    { company: "OHSGRLTD", company_name: "OHS Granada Ltd",                  country: "Jamaica"    },
+    { company: "OHSXCD",   company_name: "OHS XCD S.A.",                     country: "Granada"    },
 ];
 
 export const CATALOG_GRUPOS_INICIAL = [

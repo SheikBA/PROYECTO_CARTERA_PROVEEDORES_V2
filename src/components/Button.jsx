@@ -1,7 +1,7 @@
 import React from 'react';
 
 const Button = ({ children, variant = 'primary', onClick, className = '', icon: Icon, loading = false, disabled = false, title = '', type = 'button' }) => {
-    const baseStyle = "px-4 py-2.5 rounded-lg font-medium transition-all duration-200 flex items-center justify-center gap-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed";
+    const baseStyle = "hs-button px-4 py-2.5 rounded-lg font-medium transition-all duration-200 flex items-center justify-center gap-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed";
     const variants = {
         primary: "bg-primary hover:bg-blue-700 text-white shadow-md shadow-blue-500/20",
         secondary: "bg-surface border border-slate-200 text-slate-600 hover:bg-slate-50",
@@ -15,7 +15,7 @@ const Button = ({ children, variant = 'primary', onClick, className = '', icon: 
         <button
             type={type}
             onClick={onClick}
-            className={`${baseStyle} ${variants[variant]} ${className}`}
+            className={`${baseStyle} hs-button-${variant} ${variants[variant]} ${className}`}
             disabled={loading || disabled}
             title={title}
         >

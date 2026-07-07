@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { sp_process_invoice_data } from '../logic/Reglas_Negocio.js'; // Asegúrate de que la ruta sea correcta
+import { sp_process_invoice_data } from '../logic/Reglas_Negocio';
 
 // Esquema para validar una sola fila del Excel
 // Mapea las columnas normalizadas (snake_case) del script de Python
@@ -12,6 +12,8 @@ export const invoiceSchema = z.object({
     // Columnas para identificación de Banco (Cuenta Pagadora)
     bancos: z.any().optional(),
     banco: z.any().optional(),
+    banco_id: z.any().optional(),
+    nombre_de_banco: z.any().optional(),
     mxfiscalfolio: z.any().optional(), // Aseguramos captura de la columna exacta
 
     // Nuevas Columnas de Origen
@@ -71,10 +73,17 @@ export const invoiceSchema = z.object({
     transac_ref_c: z.any().optional(),
     transac_num_c: z.any().optional(),
 
+    // Columna B del Excel — País/Destino del proveedor (aceptar ambos nombres)
+    pais: z.any().optional(),
+    destino: z.any().optional(),
+
     // Columnas de Simulación de Reglas Epicor
     version_cfdi: z.any().optional().default('4.0'),
+    version_vfdi: z.any().optional().default('4.0'), // Alternativo (Excel tiene VERSIÓN_CFDI → version_vfdi por typo)
     sat_status: z.any().optional().default('VIGENTE'),
-    "estado:cfdi": z.any().optional(), // Nueva columna solicitada
+    estado_cfdi: z.any().optional(), // Alias
+    estado_vfdi: z.any().optional(), // Columna real del Excel (ESTADO_CFDI → estado_vfdi)
+    "estado:cfdi": z.any().optional(), // Alias alternativo
     xml_total: z.any().optional(),
     xml_retenciones: z.any().optional(),
 

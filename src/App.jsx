@@ -14,52 +14,53 @@ import { Briefcase } from 'lucide-react';
 import { DEFAULT_MENU_ITEMS } from './layout/menuItems';
 import { CATALOG_BANCOS_INICIAL, CATALOG_GRUPOS_INICIAL, CATALOG_COMPANIAS_INICIAL } from './data/catalogs';
 
+const loadAppCache = () => {
+  if (typeof window === 'undefined') return {};
+
+  try {
+    return JSON.parse(window.localStorage.getItem('cartera_app_cache') || '{}') || {};
+  } catch {
+    return {};
+  }
+};
+
+const loadBatchList = () => {
+  if (typeof window === 'undefined') return [];
+
+  try {
+    return JSON.parse(window.localStorage.getItem('cartera_batch_list') || '[]') || [];
+  } catch {
+    return [];
+  }
+};
+
 const App = () => {
+  const [initialCache] = useState(loadAppCache);
   // Estado de la sesión (simulado)
   const [currentUser, setCurrentUser] = useState(null);
 
   // Estado de navegación
   const [currentModule, setCurrentModule] = useState('dataload');
+  const [themeMode, setThemeMode] = useState(() => localStorage.getItem('cartera_theme_mode') || 'light');
 
   const [menuItems, setMenuItems] = useState(DEFAULT_MENU_ITEMS);
 
   // Estado global de facturas (compartido entre Carga y Pagos)
-  const [rawInvoices, setRawInvoices] = useState([]);
-  const [authorizedInvoices, setAuthorizedInvoices] = useState([]);
-  const [finalizedInvoices, setFinalizedInvoices] = useState([]);
-  const [rejectedInvoices, setRejectedInvoices] = useState([]);
+  const [rawInvoices, setRawInvoices] = useState(() => initialCache.invoices || []);
+  const [authorizedInvoices, setAuthorizedInvoices] = useState(() => initialCache.authorized || []);
+  const [finalizedInvoices, setFinalizedInvoices] = useState(() => initialCache.finalized || []);
+  const [rejectedInvoices, setRejectedInvoices] = useState(() => initialCache.rejected || []);
   const [availableInvoices, setAvailableInvoices] = useState([]);
-  const [trackingData, setTrackingData] = useState([]);
-  const [activeBatch, setActiveBatch] = useState(null);
-  const [batchList, setBatchList] = useState([]);  // historial de batches para MultiBatch
+  const [trackingData, setTrackingData] = useState(() => initialCache.tracking || []);
+  const [activeBatch, setActiveBatch] = useState(() => initialCache.batch || null);
+  const [batchList, setBatchList] = useState(loadBatchList);  // historial de batches para MultiBatch
 
   // Estado para catálogos dinámicos — inicializados desde catalogs.js
-  const [catalogs, setCatalogs] = useState({
+  const [catalogs] = useState(() => initialCache.cats || {
     banks: CATALOG_BANCOS_INICIAL,
     companies: CATALOG_COMPANIAS_INICIAL,
     groups: CATALOG_GRUPOS_INICIAL,
   });
-
-  // --- PERSISTENCIA: Cargar datos al iniciar ---
-  useEffect(() => {
-    const savedData = localStorage.getItem('cartera_app_cache');
-    if (savedData) {
-      try {
-        const { invoices, authorized, finalized, rejected, tracking, cats, batch } = JSON.parse(savedData);
-        if (invoices) setRawInvoices(invoices);
-        if (authorized) setAuthorizedInvoices(authorized);
-        if (finalized) setFinalizedInvoices(finalized);
-        if (rejected) setRejectedInvoices(rejected);
-        if (tracking) setTrackingData(tracking);
-        if (cats) setCatalogs(cats);
-        if (batch) setActiveBatch(batch);
-        const savedBatchList = localStorage.getItem('cartera_batch_list');
-        if (savedBatchList) setBatchList(JSON.parse(savedBatchList));
-      } catch (_e) {
-        // caché local corrupto — continuar con estado vacío
-      }
-    }
-  }, []);
 
   // --- PERSISTENCIA: Guardar cambios automáticamente ---
   useEffect(() => {
@@ -74,17 +75,102 @@ const App = () => {
     };
     try {
       localStorage.setItem('cartera_app_cache', JSON.stringify(dataToSave));
-    } catch (_e) {
+    } catch {
       // cuota localStorage excedida — datos no persistidos en esta sesión
     }
   }, [rawInvoices, authorizedInvoices, finalizedInvoices, rejectedInvoices, trackingData, catalogs, activeBatch]);
 
   useEffect(() => {
-    try { localStorage.setItem('cartera_batch_list', JSON.stringify(batchList)); } catch (e) { /* quota */ }
+    try { localStorage.setItem('cartera_batch_list', JSON.stringify(batchList)); } catch { /* quota */ }
   }, [batchList]);
 
   const handleLogin = (user) => setCurrentUser(user);
   const handleLogout = () => setCurrentUser(null);
+  const toggleThemeMode = () => setThemeMode(prev => prev === 'dark' ? 'light' : 'dark');
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = themeMode;
+    localStorage.setItem('cartera_theme_mode', themeMode);
+  }, [themeMode]);
+
+  const findMenuItemById = (items, id) => {
+    for (const item of items) {
+      if (item.id === id) return item;
+      if (item.subItems) {
+        const match = findMenuItemById(item.subItems, id);
+        if (match) return match;
+      }
+    }
+    return null;
+  };
+
+  const formatBatchDateTime = (value) => {
+    if (!value) return 'SIN FECHA';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return 'SIN FECHA';
+    return date.toLocaleString('es-MX', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true,
+    });
+  };
+
+  const getCurrentModuleHeader = () => {
+    const menuItem = findMenuItemById(menuItems, currentModule);
+    const fallbackTitle = menuItem?.label || currentModule || 'Módulo';
+
+    const headers = {
+      dataload: {
+        title: 'CARGAR FUENTE DE DATOS',
+        subtitle: 'SUBE TUS ARCHIVOS EXCEL PARA ALIMENTAR EL FLUJO DE PAGOS',
+      },
+      'payments-v2': {
+        title: 'GESTIÓN DE PAGOS V2',
+        subtitle: 'PORTAL HS | CARTERA DE PROVEEDORES',
+      },
+      'multi-batch': {
+        title: 'LISTA DE PROPUESTAS DE PAGO',
+        subtitle: 'GESTIÓN Y CONSOLIDACIÓN DE LOTES PARA ENVÍO A APROBACIÓN',
+      },
+      'authorized-payments': {
+        title: 'PAGOS AUTORIZADOS',
+        subtitle: `BATCH: ${activeBatch?.id || 'SIN BATCH'} | ${formatBatchDateTime(activeBatch?.createdAt)}`,
+      },
+      'payment-verification': {
+        title: 'COMPROBACIÓN DE PAGOS',
+        subtitle: 'CARTERA DE PROVEEDORES | P2',
+      },
+      'rejected-h2h': {
+        title: 'PAGOS RECHAZADOS H2H',
+        subtitle: 'HISTORIAL Y REPROCESO DE PAGOS',
+      },
+      'rejected-general': {
+        title: 'PAGOS RECHAZADOS',
+        subtitle: 'HISTORIAL Y REPROCESO DE PAGOS',
+      },
+      reports: {
+        title: 'HOTEL SHOPS - REPORTERÍA FISCAL',
+        subtitle: 'CONTROL INTERNO Y AUDITORÍA DE PAGOS',
+      },
+      templates: {
+        title: 'CONFIGURACIÓN DE PLANTILLAS',
+        subtitle: 'CARTERA DE PROVEEDORES | EP-2829',
+      },
+      'batch-management': {
+        title: 'GESTIÓN DE LOTES',
+        subtitle: 'ADMINISTRA Y CONSOLIDA LOS BATCHES GENERADOS EN GESTIÓN DE PAGOS',
+      },
+    };
+
+    return headers[currentModule] || {
+      title: String(fallbackTitle).toUpperCase(),
+      subtitle: '',
+    };
+  };
 
   // Función para mover módulos en el sidebar
   const moveMenuItem = (index, direction) => {
@@ -142,7 +228,10 @@ const App = () => {
           <MultiBatch
             batchList={batchList}
             setBatchList={setBatchList}
+            setRawInvoices={setRawInvoices}
             currentUser={currentUser}
+            finalizedInvoices={finalizedInvoices}
+            activeBatch={activeBatch}
           />
         );
 
@@ -150,6 +239,9 @@ const App = () => {
         return (
           <AuthorizedPayments
             finalizedInvoices={finalizedInvoices}
+            setFinalizedInvoices={setFinalizedInvoices}
+            setTrackingData={setTrackingData}
+            setRejectedInvoices={setRejectedInvoices}
             activeBatch={activeBatch}
             catalogs={catalogs}
           />
@@ -233,6 +325,8 @@ const App = () => {
     return <Login onLogin={handleLogin} />;
   }
 
+  const currentModuleHeader = getCurrentModuleHeader();
+
   return (
     <MainLayout
       currentUser={currentUser}
@@ -241,12 +335,15 @@ const App = () => {
       setCurrentModule={setCurrentModule}
       menuItems={menuItems}
       onMoveMenuItem={moveMenuItem}
+      themeMode={themeMode}
+      onToggleTheme={toggleThemeMode}
+      headerTitle={currentModuleHeader.title}
+      headerSubtitle={currentModuleHeader.subtitle}
     >
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Open+Sans:wght@300;700&family=Roboto:wght@400;600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Open+Sans:wght@600;700&family=Roboto:wght@400;500;600;700&display=swap');
         h1, h2, h3, h4, h5, h6 {
           font-family: 'Open Sans', sans-serif;
-          font-weight: 300;
         }
       `}</style>
       <div style={{ fontFamily: "'Roboto', sans-serif", height: '100%' }}>

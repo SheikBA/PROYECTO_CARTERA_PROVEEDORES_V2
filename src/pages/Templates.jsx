@@ -49,7 +49,7 @@ const Templates = () => {
         <div className="p-6 h-full flex flex-col gap-6 animate-fade-in bg-slate-50/50">
 
             {/* Cabecera */}
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+            <div className="hidden">
                 <div>
                     <h1 className="text-2xl font-black text-slate-800 tracking-tight uppercase">
                         Configuración de Plantillas

@@ -185,7 +185,7 @@ const PaymentVerification = ({ trackingData = [], setTrackingData, finalizedInvo
         <div className="p-6 h-full flex flex-col gap-6 animate-fade-in bg-slate-50/50">
 
             {/* CABECERA */}
-            <div className="flex justify-between items-center">
+            <div className="hidden">
                 <div>
                     <h1 className="text-2xl font-black text-slate-800 tracking-tight uppercase" style={{ fontFamily: HS.fontTitle }}>
                         Comprobación de Pagos
@@ -379,7 +379,7 @@ const PaymentVerification = ({ trackingData = [], setTrackingData, finalizedInvo
                                         <p className="text-[9px] text-slate-400 font-mono">{inv.meta?.company}</p>
                                     </td>
                                     <td className="p-4">
-                                        <Badge status="secondary" className="text-[9px]">{inv.group || 'GENERAL'}</Badge>
+                                        <Badge status="secondary" className="text-[9px]">{inv.paymentGroupId || inv.meta?.paymentGroupId || inv.group || 'GENERAL'}</Badge>
                                     </td>
                                     <td className="p-4 text-slate-500 font-mono">{formatDate(inv.processedDate)}</td>
                                     <td className="p-4 text-center font-black text-slate-400">{inv.currency}</td>

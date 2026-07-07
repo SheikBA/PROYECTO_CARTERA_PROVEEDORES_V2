@@ -125,7 +125,7 @@ const Reports = ({ rejectedInvoices, trackingData }) => {
         <div className="p-6 h-full flex flex-col space-y-6 animate-fade-in">
             {/* Header */}
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-6 rounded-xl border border-slate-200 shadow-sm gap-4">
-                <div className="flex items-center">
+                <div className="hidden">
                     <div>
                         <h1 className="text-2xl font-black text-slate-800 tracking-tight uppercase">Hotel Shops — Reportería Fiscal</h1>
                         <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Control Interno y Auditoría de Pagos</p>

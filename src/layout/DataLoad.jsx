@@ -103,13 +103,6 @@ const DataLoad = ({ setRawInvoices, setCurrentModule }) => {
 
     return (
         <div className="p-6 h-full flex flex-col space-y-6 animate-fade-in-up">
-            <div className="flex justify-between items-end">
-                <div>
-                    <h1 className="text-2xl font-bold tracking-tight text-slate-800">Cargar Fuente de Datos</h1>
-                    <p className="text-slate-500 mt-1">Sube tus archivos Excel para alimentar el flujo de pagos.</p>
-                </div>
-            </div>
-
             <Card className={`border-2 border-dashed transition-colors ${error ? 'border-red-300 bg-red-50/50' : 'border-slate-300 hover:border-primary'}`}>
                 <div className="p-12 flex flex-col items-center justify-center text-center">
                     <div className={`p-4 rounded-full mb-4 ${error ? 'bg-red-100 text-red-600' : 'bg-blue-50 text-primary'}`}>

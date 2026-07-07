@@ -12,6 +12,13 @@ dist
 dist-ssr
 *.local
 
+# Logs locales (Windows / PowerShell)
+build_err.txt
+dev_err.txt
+dev_out.txt
+"git status"
+git\ status
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

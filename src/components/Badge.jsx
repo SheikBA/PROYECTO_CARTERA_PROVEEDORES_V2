@@ -1,5 +1,5 @@
 const Badge = ({ status, children }) => {
-    let classes = "inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold border ";
+    let classes = `hs-badge hs-badge-${status || 'default'} inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold border `;
 
     switch (status?.toLowerCase()) {
         case 'paid':

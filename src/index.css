@@ -26,3 +26,346 @@
   .animate-fade-in { animation: fade-in 0.4s ease-out forwards; }
   .animate-fade-in-up { animation: fade-in-up 0.6s ease-out forwards; }
 }
+
+:root {
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+@layer components {
+  .hs-app {
+    --hs-blue-50: #E6F7FC;
+    --hs-blue-100: #C7ECF5;
+    --hs-blue-200: #8FD9EB;
+    --hs-blue-500: #0082A6;
+    --hs-blue-600: #006B8C;
+    --hs-blue-700: #005674;
+    --hs-teal-50: #E8F8F6;
+    --hs-teal-100: #CFF1ED;
+    --hs-teal-500: #25A79F;
+    --hs-teal-600: #1B8682;
+    --hs-coral-50: #FEF1E8;
+    --hs-coral-100: #FCE0CC;
+    --hs-coral-200: #FAC4A1;
+    --hs-coral-300: #F79962;
+    --hs-coral-500: #F1561E;
+    --hs-coral-600: #D43F0E;
+    --hs-coral-700: #A82F0E;
+    --hs-bg: #FFFFFF;
+    --hs-surface-1: #FBFCFD;
+    --hs-surface-2: #F6F8FA;
+    --hs-surface-3: #EEF1F4;
+    --hs-border-subtle: #EEF1F4;
+    --hs-border: #DFE3E8;
+    --hs-border-strong: #C3CAD2;
+    --hs-text-primary: #0F1B23;
+    --hs-text-secondary: #4A5763;
+    --hs-text-tertiary: #6F7C88;
+    --hs-text-muted: #9AA5B1;
+    --hs-dark-surface: #0F1B23;
+    --hs-dark-surface-2: #1F2A36;
+    --hs-shadow-xs: 0 1px 2px rgba(15, 27, 35, 0.04);
+    --hs-shadow-sm: 0 1px 2px rgba(15, 27, 35, 0.04), 0 1px 3px rgba(15, 27, 35, 0.06);
+    --hs-shadow-md: 0 2px 4px rgba(15, 27, 35, 0.04), 0 4px 12px rgba(15, 27, 35, 0.06);
+    --hs-shadow-lg: 0 4px 8px rgba(15, 27, 35, 0.05), 0 12px 24px rgba(15, 27, 35, 0.08);
+    --hs-focus: 0 0 0 3px rgba(0, 130, 166, 0.18);
+    background-color: var(--hs-bg);
+    color: var(--hs-text-primary);
+    font-family: 'Roboto', system-ui, sans-serif;
+  }
+
+  [data-theme="dark"] .hs-app {
+    --hs-bg: #0A141A;
+    --hs-surface-1: #0F1C24;
+    --hs-surface-2: #16252F;
+    --hs-surface-3: #1F303B;
+    --hs-border-subtle: #1B2A35;
+    --hs-border: #243440;
+    --hs-border-strong: #314453;
+    --hs-text-primary: #F0F4F7;
+    --hs-text-secondary: #B5C0CB;
+    --hs-text-tertiary: #828F9B;
+    --hs-text-muted: #5C6975;
+    --hs-dark-surface: #070F14;
+    --hs-dark-surface-2: #0F1B23;
+    --hs-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.35);
+    --hs-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.3);
+    --hs-shadow-md: 0 2px 4px rgba(0, 0, 0, 0.4), 0 4px 12px rgba(0, 0, 0, 0.4);
+    --hs-shadow-lg: 0 4px 8px rgba(0, 0, 0, 0.5), 0 12px 24px rgba(0, 0, 0, 0.4);
+    --hs-focus: 0 0 0 3px rgba(59, 190, 180, 0.3);
+  }
+
+  .hs-app h1,
+  .hs-app h2,
+  .hs-app h3,
+  .hs-app h4,
+  .hs-app h5,
+  .hs-app h6 {
+    font-family: 'Open Sans', system-ui, sans-serif;
+    letter-spacing: 0 !important;
+  }
+
+  .hs-app .font-mono {
+    font-family: 'JetBrains Mono', 'SF Mono', ui-monospace, monospace;
+  }
+
+  .hs-app .tracking-tight,
+  .hs-app .tracking-tighter,
+  .hs-app .tracking-wider,
+  .hs-app .tracking-widest {
+    letter-spacing: 0 !important;
+  }
+
+  .hs-app .bg-background { background-color: var(--hs-bg) !important; }
+  .hs-app .bg-surface,
+  .hs-app .bg-white { background-color: var(--hs-surface-1) !important; }
+  .hs-app .bg-slate-50,
+  .hs-app .bg-slate-50\/30,
+  .hs-app .bg-slate-50\/50,
+  .hs-app .bg-slate-50\/80 { background-color: var(--hs-surface-2) !important; }
+  .hs-app .bg-slate-100,
+  .hs-app .hover\:bg-slate-100:hover { background-color: var(--hs-surface-3) !important; }
+  .hs-app .bg-slate-200,
+  .hs-app .hover\:bg-slate-200:hover,
+  .hs-app .bg-slate-300 { background-color: var(--hs-border) !important; }
+  .hs-app .bg-slate-700 { background-color: #323F4B !important; }
+  .hs-app .bg-slate-800,
+  .hs-app .hover\:bg-slate-800:hover { background-color: var(--hs-dark-surface-2) !important; }
+  .hs-app .bg-slate-900,
+  .hs-app .hover\:bg-slate-900:hover { background-color: var(--hs-dark-surface) !important; }
+  .hs-app .bg-slate-900\/40,
+  .hs-app .bg-slate-900\/50,
+  .hs-app .bg-slate-900\/60 { background-color: rgba(15, 27, 35, 0.58) !important; }
+
+  .hs-app .bg-primary,
+  .hs-app .bg-blue-500,
+  .hs-app .bg-blue-600,
+  .hs-app .bg-indigo-600,
+  .hs-app .hover\:bg-primary:hover,
+  .hs-app .hover\:bg-primary\/90:hover,
+  .hs-app .hover\:bg-blue-600:hover,
+  .hs-app .hover\:bg-blue-700:hover,
+  .hs-app .hover\:bg-indigo-700:hover { background-color: var(--hs-blue-500) !important; }
+  .hs-app .bg-blue-50,
+  .hs-app .bg-blue-50\/30,
+  .hs-app .bg-blue-50\/50,
+  .hs-app .bg-primary\/5,
+  .hs-app .bg-primary\/10,
+  .hs-app .hover\:bg-blue-50:hover,
+  .hs-app .hover\:bg-blue-50\/30:hover { background-color: var(--hs-blue-50) !important; }
+  .hs-app .bg-blue-100,
+  .hs-app .hover\:bg-blue-100:hover { background-color: var(--hs-blue-100) !important; }
+  .hs-app .text-primary,
+  .hs-app .text-blue-400,
+  .hs-app .text-blue-500,
+  .hs-app .text-blue-600,
+  .hs-app .text-blue-700,
+  .hs-app .hover\:text-primary:hover,
+  .hs-app .hover\:text-blue-500:hover,
+  .hs-app .hover\:text-blue-600:hover { color: var(--hs-blue-500) !important; }
+  .hs-app .border-blue-100,
+  .hs-app .border-blue-200,
+  .hs-app .border-blue-300,
+  .hs-app .border-primary,
+  .hs-app .hover\:border-primary:hover { border-color: var(--hs-blue-200) !important; }
+
+  .hs-app .bg-teal-50,
+  .hs-app .bg-emerald-50,
+  .hs-app .bg-emerald-100,
+  .hs-app .hover\:bg-emerald-50:hover,
+  .hs-app .hover\:bg-emerald-100:hover { background-color: var(--hs-teal-50) !important; }
+  .hs-app .bg-accent,
+  .hs-app .bg-teal-600,
+  .hs-app .bg-emerald-500,
+  .hs-app .bg-emerald-600,
+  .hs-app .hover\:bg-teal-700:hover,
+  .hs-app .hover\:bg-emerald-600:hover { background-color: var(--hs-teal-500) !important; }
+  .hs-app .text-emerald-400,
+  .hs-app .text-emerald-500,
+  .hs-app .text-emerald-600,
+  .hs-app .text-emerald-700,
+  .hs-app .text-teal-600,
+  .hs-app .text-teal-700 { color: var(--hs-teal-600) !important; }
+  .hs-app .border-emerald-100,
+  .hs-app .border-emerald-200,
+  .hs-app .border-teal-100,
+  .hs-app .border-teal-200 { border-color: var(--hs-teal-100) !important; }
+
+  .hs-app .bg-amber-50,
+  .hs-app .bg-amber-100,
+  .hs-app .bg-orange-100,
+  .hs-app .hover\:bg-amber-50:hover { background-color: var(--hs-coral-50) !important; }
+  .hs-app .bg-amber-500,
+  .hs-app .bg-orange-500,
+  .hs-app .hover\:bg-amber-600:hover,
+  .hs-app .hover\:bg-orange-600:hover { background-color: var(--hs-coral-300) !important; }
+  .hs-app .text-amber-500,
+  .hs-app .text-amber-600,
+  .hs-app .text-amber-700,
+  .hs-app .text-orange-700 { color: var(--hs-coral-600) !important; }
+  .hs-app .border-amber-100,
+  .hs-app .border-amber-200 { border-color: var(--hs-coral-200) !important; }
+
+  .hs-app .bg-red-50,
+  .hs-app .bg-red-50\/30,
+  .hs-app .bg-red-50\/50,
+  .hs-app .bg-red-100,
+  .hs-app .hover\:bg-red-50:hover,
+  .hs-app .hover\:bg-red-100:hover { background-color: var(--hs-coral-100) !important; }
+  .hs-app .bg-red-500,
+  .hs-app .bg-red-600,
+  .hs-app .hover\:bg-red-600:hover,
+  .hs-app .hover\:bg-red-700:hover { background-color: var(--hs-coral-600) !important; }
+  .hs-app .text-danger,
+  .hs-app .text-red-400,
+  .hs-app .text-red-500,
+  .hs-app .text-red-600,
+  .hs-app .text-red-700,
+  .hs-app .hover\:text-danger:hover,
+  .hs-app .hover\:text-red-500:hover,
+  .hs-app .hover\:text-red-600:hover { color: var(--hs-coral-600) !important; }
+  .hs-app .border-red-100,
+  .hs-app .border-red-200,
+  .hs-app .border-red-300 { border-color: var(--hs-coral-200) !important; }
+
+  .hs-app .text-textPrimary,
+  .hs-app .text-slate-900,
+  .hs-app .text-slate-800,
+  .hs-app .text-slate-700 { color: var(--hs-text-primary) !important; }
+  .hs-app .text-textSecondary,
+  .hs-app .text-slate-600,
+  .hs-app .text-slate-500 { color: var(--hs-text-secondary) !important; }
+  .hs-app .text-slate-400,
+  .hs-app .text-slate-300 { color: var(--hs-text-muted) !important; }
+  .hs-app .border-slate-100 { border-color: var(--hs-border-subtle) !important; }
+  .hs-app .border-slate-200,
+  .hs-app .border-slate-300 { border-color: var(--hs-border) !important; }
+  .hs-app .divide-slate-100 > :not([hidden]) ~ :not([hidden]),
+  .hs-app .divide-slate-200 > :not([hidden]) ~ :not([hidden]) { border-color: var(--hs-border-subtle) !important; }
+
+  .hs-app .rounded-xl,
+  .hs-app .rounded-2xl { border-radius: 8px !important; }
+  .hs-app .rounded-lg { border-radius: 8px !important; }
+  .hs-app .rounded-md { border-radius: 6px !important; }
+  .hs-app .shadow-sm { box-shadow: var(--hs-shadow-sm) !important; }
+  .hs-app .shadow-md,
+  .hs-app .shadow-lg,
+  .hs-app .shadow-xl,
+  .hs-app .shadow-2xl { box-shadow: var(--hs-shadow-md) !important; }
+
+  .hs-app input,
+  .hs-app textarea,
+  .hs-app select {
+    background-color: var(--hs-bg) !important;
+    border-color: var(--hs-border) !important;
+    color: var(--hs-text-primary) !important;
+  }
+
+  .hs-app input::placeholder,
+  .hs-app textarea::placeholder {
+    color: var(--hs-text-muted) !important;
+  }
+
+  .hs-app input:focus,
+  .hs-app textarea:focus,
+  .hs-app select:focus,
+  .hs-app button:focus-visible {
+    outline: none !important;
+    box-shadow: var(--hs-focus) !important;
+  }
+
+  .hs-app table thead,
+  .hs-app table th {
+    background-color: var(--hs-surface-2) !important;
+    color: var(--hs-text-secondary) !important;
+  }
+
+  .hs-app table tbody tr:hover {
+    background-color: var(--hs-blue-50) !important;
+  }
+
+  .hs-app .hs-card,
+  .hs-app .hs-modal-panel {
+    background-color: var(--hs-surface-1) !important;
+    border-color: var(--hs-border) !important;
+    border-radius: 8px !important;
+    box-shadow: var(--hs-shadow-sm) !important;
+  }
+
+  .hs-app .hs-button {
+    min-height: 36px;
+    border-radius: 8px !important;
+    font-family: 'Roboto', system-ui, sans-serif;
+    font-weight: 600;
+    letter-spacing: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .hs-app .hs-button-primary {
+    background-color: var(--hs-blue-500) !important;
+    border: 1px solid var(--hs-blue-500) !important;
+    color: #FFFFFF !important;
+  }
+
+  .hs-app .hs-button-primary:hover {
+    background-color: var(--hs-blue-600) !important;
+    border-color: var(--hs-blue-600) !important;
+  }
+
+  .hs-app .hs-button-secondary {
+    background-color: var(--hs-bg) !important;
+    border: 1px solid var(--hs-border) !important;
+    color: var(--hs-text-secondary) !important;
+  }
+
+  .hs-app .hs-button-secondary:hover,
+  .hs-app .hs-button-ghost:hover {
+    background-color: var(--hs-surface-2) !important;
+    color: var(--hs-text-primary) !important;
+  }
+
+  .hs-app .hs-button-success {
+    background-color: var(--hs-teal-500) !important;
+    color: #FFFFFF !important;
+  }
+
+  .hs-app .hs-button-danger {
+    background-color: var(--hs-coral-50) !important;
+    border: 1px solid var(--hs-coral-200) !important;
+    color: var(--hs-coral-600) !important;
+  }
+
+  .hs-app .hs-button-dark {
+    background-color: var(--hs-dark-surface) !important;
+    color: #FFFFFF !important;
+  }
+
+  .hs-app .hs-badge {
+    border-radius: 9999px !important;
+    font-weight: 700;
+    letter-spacing: 0 !important;
+  }
+
+  .hs-logo-mark {
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    background: var(--hs-blue-500);
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 3px;
+    padding: 7px;
+    box-shadow: var(--hs-shadow-sm);
+  }
+
+  .hs-logo-mark span {
+    border-radius: 3px;
+  }
+
+  .hs-logo-mark span:nth-child(1) { background: var(--hs-teal-500); }
+  .hs-logo-mark span:nth-child(2) { background: var(--hs-coral-300); }
+  .hs-logo-mark span:nth-child(3) { background: #FFFFFF; }
+}

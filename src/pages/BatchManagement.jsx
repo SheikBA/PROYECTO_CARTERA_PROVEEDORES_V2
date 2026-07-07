@@ -61,7 +61,7 @@ const BatchManagement = ({ batches = [], setBatches, setFinalizedInvoices, curre
 
             {/* Cabecera */}
             <div className="flex justify-between items-center">
-                <div>
+                <div className="hidden">
                     <h1 className="text-2xl font-black text-slate-800 tracking-tight uppercase">Gestión de Lotes</h1>
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
                         Administra y consolida los batches generados en Gestión de Pagos

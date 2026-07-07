@@ -1,9 +1,0 @@
-[33mcommit 693e4fdb91d71be73dc91a6f814aa6d8c22b3b3b[m[33m ([m[1;36mHEAD -> [m[1;32mfeature/mejoras-gestion-pagos[m[33m, [m[1;31morigin/feature/mejoras-gestion-pagos[m[33m)[m
-Author: Netos <ebaeza@hotel-shops.com>
-Date:   Mon Mar 30 14:54:22 2026 -0500
-
-    Implementacion de traking montos autorizacin pagos, implementcion de listado de grupos d eproveedores
-
- src/App.jsx            |  10 [32m+[m[31m-[m
- src/pages/Payments.jsx | 296 [32m++++++++++++++++++++++++++++++++++++++++[m[31m---------[m
- 2 files changed, 250 insertions(+), 56 deletions(-)
